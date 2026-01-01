@@ -60,3 +60,16 @@ struct PRReviewManagerApp: App {
         .menuBarExtraStyle(.window)
     }
 }
+
+struct MenuBarLabel: View {
+    @StateObject private var viewModel = PRListViewModel.shared
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Image(systemName: "arrow.triangle.pull")
+            if !viewModel.toReviewPRs.isEmpty {
+                Text("\(viewModel.toReviewPRs.count)")
+            }
+        }
+    }
+}
