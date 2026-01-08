@@ -12,7 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Create right-click menu
         rightClickMenu = NSMenu()
-        rightClickMenu?.addItem(NSMenuItem(title: "Quit PRReviewManager", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        rightClickMenu?.addItem(NSMenuItem(title: "Quit PRMaster", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         // Monitor for right-clicks on status bar area
         localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown]) { [weak self] event in
@@ -98,10 +98,10 @@ class FullWindowController: NSObject, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "PRReviewManager"
+        window.title = "PRMaster"
         window.contentView = NSHostingView(rootView: contentView)
         window.center()
-        window.setFrameAutosaveName("PRReviewManagerMainWindow")
+        window.setFrameAutosaveName("PRMasterMainWindow")
         window.delegate = self
 
         // Make window key and order front before creating controller
@@ -168,7 +168,7 @@ struct BadgeSourceConfig: Codable, Identifiable {
 }
 
 @main
-struct PRReviewManagerApp: App {
+struct PRMasterApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     let modelContainer: ModelContainer
     @StateObject private var appState = AppState.shared

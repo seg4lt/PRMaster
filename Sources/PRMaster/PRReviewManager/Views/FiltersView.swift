@@ -130,7 +130,7 @@ struct FiltersView: View {
                 }
 
                 let content = UNMutableNotificationContent()
-                content.title = "PRReviewManager - Test"
+                content.title = "PRMaster - Test"
                 content.subtitle = "Filter: \(filter.name)"
 
                 var body = "This is a test notification"

@@ -2,15 +2,15 @@
 import PackageDescription
 
 let package = Package(
-    name: "PRReviewManager",
+    name: "PRMaster",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "PRReviewManager", targets: ["PRReviewManager"])
+        .executable(name: "PRMaster", targets: ["PRMaster"])
     ],
     targets: [
         .executableTarget(
-            name: "PRReviewManager",
-            path: "Sources/PRReviewManager",
+            name: "PRMaster",
+            path: "Sources/PRMaster",
             resources: [
                 .process("Resources")
             ]

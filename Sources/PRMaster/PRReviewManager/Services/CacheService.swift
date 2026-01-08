@@ -9,7 +9,7 @@ actor CacheService {
 
     private init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        cacheDir = appSupport.appendingPathComponent("PRReviewManager", isDirectory: true)
+        cacheDir = appSupport.appendingPathComponent("PRMaster", isDirectory: true)
         prCacheFile = cacheDir.appendingPathComponent("pr_cache.json")
         notificationStateFile = cacheDir.appendingPathComponent("notification_state.json")
 

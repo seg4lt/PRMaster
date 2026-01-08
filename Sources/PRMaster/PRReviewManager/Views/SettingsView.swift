@@ -88,7 +88,7 @@ struct SettingsView: View {
 
                 Divider()
 
-                Button("Quit PRReviewManager") {
+                Button("Quit PRMaster") {
                     NSApplication.shared.terminate(nil)
                 }
                 .buttonStyle(.bordered)

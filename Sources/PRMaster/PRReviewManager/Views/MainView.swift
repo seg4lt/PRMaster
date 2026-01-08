@@ -170,7 +170,7 @@ struct MainView: View {
 
     private var headerView: some View {
         HStack {
-            Text("PRReviewManager")
+            Text("PRMaster")
                 .font(.title2)
                 .fontWeight(.semibold)
 

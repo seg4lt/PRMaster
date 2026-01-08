@@ -1,11 +1,11 @@
 #!/bin/bash
 set -e
 
-APP_NAME="PRReviewManager"
+APP_NAME="PRMaster"
 BUNDLE_ID="com.seg4lt.prmaster"
 BUILD_DIR=".build/release"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
-ASSETS_DIR="Sources/PRReviewManager/Resources/Assets.xcassets"
+ASSETS_DIR="Sources/PRMaster/Resources/Assets.xcassets"
 
 echo "Building release..."
 swift build -c release
@@ -16,7 +16,7 @@ mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
 # Copy executable
-cp "$BUILD_DIR/PRReviewManager" "$APP_DIR/Contents/MacOS/"
+cp "$BUILD_DIR/PRMaster" "$APP_DIR/Contents/MacOS/"
 
 # Compile asset catalog (includes app icon)
 echo "Compiling assets..."
@@ -35,7 +35,7 @@ cat > "$APP_DIR/Contents/Info.plist" << EOF
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>PRReviewManager</string>
+    <string>PRMaster</string>
     <key>CFBundleIdentifier</key>
     <string>$BUNDLE_ID</string>
     <key>CFBundleName</key>
