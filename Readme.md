@@ -90,3 +90,4 @@ App data is stored at:
 ```
 ~/Library/Application Support/PRMaster/
 ```
+
