@@ -1,0 +1,138 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Build for arm64
+        run: swift build -c release --arch arm64
+
+      - name: Build for x86_64
+        run: swift build -c release --arch x86_64
+
+      - name: Create Universal Binary
+        run: |
+          mkdir -p .build/universal
+          lipo -create \
+            .build/arm64-apple-macosx/release/PRMaster \
+            .build/x86_64-apple-macosx/release/PRMaster \
+            -output .build/universal/PRMaster
+
+      - name: Create App Bundle
+        run: |
+          APP_NAME="PRMaster"
+          APP_DIR=".build/universal/$APP_NAME.app"
+          ASSETS_DIR="Sources/PRMaster/Resources/Assets.xcassets"
+
+          mkdir -p "$APP_DIR/Contents/MacOS"
+          mkdir -p "$APP_DIR/Contents/Resources"
+
+          # Copy universal executable
+          cp .build/universal/PRMaster "$APP_DIR/Contents/MacOS/"
+
+          # Compile asset catalog
+          xcrun actool "$ASSETS_DIR" \
+            --compile "$APP_DIR/Contents/Resources" \
+            --platform macosx \
+            --minimum-deployment-target 14.0 \
+            --app-icon AppIcon \
+            --output-partial-info-plist .build/universal/assets-info.plist \
+            2>/dev/null || echo "Warning: actool failed"
+
+          # Create Info.plist
+          cat > "$APP_DIR/Contents/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>PRMaster</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.seg4lt.prmaster</string>
+              <key>CFBundleName</key>
+              <string>PRMaster</string>
+              <key>CFBundleDisplayName</key>
+              <string>PRMaster</string>
+              <key>CFBundleVersion</key>
+              <string>1.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+              <key>CFBundleIconName</key>
+              <string>AppIcon</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>14.0</string>
+              <key>LSUIElement</key>
+              <true/>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>NSUserNotificationAlertStyle</key>
+              <string>banner</string>
+              <key>NSSupportsAutomaticTermination</key>
+              <false/>
+          </dict>
+          </plist>
+          EOF
+
+          # Ad-hoc sign
+          codesign --force --deep --sign - "$APP_DIR"
+
+      - name: Verify Universal Binary
+        run: |
+          echo "Architectures in binary:"
+          lipo -info .build/universal/PRMaster.app/Contents/MacOS/PRMaster
+
+      - name: Create ZIP
+        run: |
+          cd .build/universal
+          zip -r PRMaster.zip PRMaster.app
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PRMaster
+          path: .build/universal/PRMaster.zip
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: .build/universal/PRMaster.zip
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            1. Download `PRMaster.zip` and extract it
+            2. Remove the quarantine flag (required since the app is not notarized):
+               ```bash
+               xattr -cr /path/to/PRMaster.app
+               ```
+            3. Move to Applications and open:
+               ```bash
+               mv /path/to/PRMaster.app /Applications/
+               open /Applications/PRMaster.app
+               ```
+
+            **Requirements:** macOS 14.0+, GitHub CLI (`gh`) installed and authenticated
