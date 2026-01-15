@@ -209,11 +209,6 @@ struct MainView: View {
 
             Spacer()
 
-            // Enriching indicator
-            if viewModel.isEnriching {
-                EnrichingIndicator()
-            }
-
             // Last updated time
             if let lastUpdate = viewModel.lastUpdate {
                 Text(timeAgoText(from: lastUpdate))
@@ -222,16 +217,19 @@ struct MainView: View {
             }
 
             if isCompact {
-                Button {
-                    Task { await viewModel.refresh() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.caption2)
-                        .rotationEffect(.degrees(viewModel.isLoading ? 360 : 0))
-                        .animation(viewModel.isLoading ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: viewModel.isLoading)
+                if viewModel.isLoading || viewModel.isEnriching {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 16, height: 16)
+                } else {
+                    Button {
+                        Task { await viewModel.refresh() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.borderless)
                 }
-                .buttonStyle(.borderless)
-                .disabled(viewModel.isLoading)
 
                 if let action = openWindowAction {
                     Button(action: action) {

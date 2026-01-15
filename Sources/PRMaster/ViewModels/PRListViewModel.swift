@@ -114,15 +114,22 @@ class PRListViewModel: ObservableObject {
     }
 
     func loadAllData() async {
-        guard !isLoading else { return }
+        guard !isLoading && !isEnriching else { return }
 
-        isLoading = true
+        // Only show skeleton on initial load, show subtle indicator on refresh
+        let isInitialLoad = toReviewPRs.isEmpty && reviewedPRs.isEmpty && myOpenPRs.isEmpty
+        if isInitialLoad {
+            isLoading = true
+        } else {
+            isEnriching = true  // Shows loading indicator while keeping data visible
+        }
         errors = []
         retryCount = 0
 
         currentUser = try? await github.getCurrentUser()
+        let userLogin = currentUser ?? ""
 
-        // First, fetch basic PR lists (fast)
+        // Fetch basic PR lists in parallel
         async let toReviewBasic = loadBasicPRs(type: .toReview)
         async let reviewedBasic = loadBasicPRs(type: .reviewed)
         async let myOpenBasic = loadBasicPRs(type: .myOpen)
@@ -133,52 +140,72 @@ class PRListViewModel: ObservableObject {
             myOpenBasic
         )
 
-        // Extract PRs and errors
-        let toReviewPRsList = toReviewResult.prs
-        let reviewedPRsList = reviewedResult.prs
-        let myOpenPRsList = myOpenResult.prs
-
         // Collect any errors
         [toReviewResult.error, reviewedResult.error, myOpenResult.error]
             .compactMap { $0 }
             .forEach { errors.append($0) }
 
-        // Update UI with basic data immediately (without enrichment)
-        let userLogin = currentUser ?? ""
+        // Enrich all PRs in parallel (in background, no UI update yet)
+        async let enrichedToReview = enrichPRsSafe(toReviewResult.prs)
+        async let enrichedReviewed = enrichPRsSafe(reviewedResult.prs)
+        async let enrichedMyOpen = enrichPRsSafe(myOpenResult.prs)
 
-        // Create basic enriched PRs (without review details yet)
-        let basicToReview = toReviewPRsList.map { pr in
-            EnrichedPullRequest(pr: pr, reviewDecision: nil, reviews: [], requestedReviewers: [], mergedBy: nil, mergedAt: nil, detail: nil)
-        }.filter { enriched in
-            enriched.pr.author?.login != userLogin
+        let (toReviewEnriched, reviewedEnriched, myOpenEnriched) = await (
+            enrichedToReview,
+            enrichedReviewed,
+            enrichedMyOpen
+        )
+
+        // Helper to check if user has submitted a final review
+        let hasSubmittedReview: (EnrichedPullRequest) -> Bool = { enriched in
+            enriched.reviews.contains { review in
+                review.author?.login == userLogin &&
+                (review.state == .approved || review.state == .changesRequested)
+            }
         }
 
-        let basicReviewed = reviewedPRsList.map { pr in
-            EnrichedPullRequest(pr: pr, reviewDecision: nil, reviews: [], requestedReviewers: [], mergedBy: nil, mergedAt: nil, detail: nil)
-        }.filter { enriched in
-            enriched.pr.author?.login != userLogin
+        // Filter "To Review" - PRs where current user hasn't submitted approval/changes requested
+        let toReviewFiltered = toReviewEnriched.filter { enriched in
+            let isMyPR = enriched.pr.author?.login == userLogin
+            return !isMyPR && !hasSubmittedReview(enriched)
         }
 
-        let basicMyOpen = myOpenPRsList.map { pr in
-            EnrichedPullRequest(pr: pr, reviewDecision: nil, reviews: [], requestedReviewers: [], mergedBy: nil, mergedAt: nil, detail: nil)
+        // Include PRs from reviewed where user only commented (not approved/changes requested)
+        let commentedOnly = reviewedEnriched.filter { enriched in
+            let isMyPR = enriched.pr.author?.login == userLogin
+            return !isMyPR && !hasSubmittedReview(enriched)
         }
 
-        // Show basic data immediately
-        toReviewPRs = basicToReview
-        reviewedPRs = basicReviewed
-        myOpenPRs = basicMyOpen
+        // "Reviewed" - PRs by others that user has approved/changes requested
+        let alreadyReviewed = toReviewEnriched.filter { enriched in
+            let isMyPR = enriched.pr.author?.login == userLogin
+            return !isMyPR && hasSubmittedReview(enriched)
+        }
+        let otherReviewed = reviewedEnriched.filter { enriched in
+            let isMyPR = enriched.pr.author?.login == userLogin
+            return !isMyPR && hasSubmittedReview(enriched)
+        }
+
+        // SINGLE ATOMIC UI UPDATE - only now touch @Published properties
+        toReviewPRs = (toReviewFiltered + commentedOnly).uniqued()
+        reviewedPRs = (alreadyReviewed + otherReviewed).uniqued()
+        myOpenPRs = myOpenEnriched
         lastUpdate = Date()
         isLoading = false
-
-        // Now enrich with details in background
-        isEnriching = true
-        await enrichAndUpdate(
-            toReviewPRsList: toReviewPRsList,
-            reviewedPRsList: reviewedPRsList,
-            myOpenPRsList: myOpenPRsList,
-            userLogin: userLogin
-        )
         isEnriching = false
+
+        // Save to cache
+        await cache.savePRCache(
+            toReview: toReviewPRs,
+            reviewed: reviewedPRs,
+            myPRs: myOpenPRs,
+            currentUser: currentUser
+        )
+
+        // Check for notifications
+        let filters = fetchNotificationFilters()
+        await checkNotifications(for: toReviewPRs, filters: filters)
+        await checkMyPRNotifications(for: myOpenPRs)
     }
 
     private enum PRFetchType {
@@ -200,75 +227,6 @@ class PRListViewModel: ObservableObject {
         } catch {
             return ([], AppError.from(error))
         }
-    }
-
-    private func enrichAndUpdate(
-        toReviewPRsList: [PullRequest],
-        reviewedPRsList: [PullRequest],
-        myOpenPRsList: [PullRequest],
-        userLogin: String
-    ) async {
-        // Enrich all PR lists in parallel
-        async let enrichedToReview = enrichPRsSafe(toReviewPRsList)
-        async let enrichedReviewed = enrichPRsSafe(reviewedPRsList)
-        async let enrichedMyOpen = enrichPRsSafe(myOpenPRsList)
-
-        let (toReviewResult, reviewedResult, myOpenResult) = await (
-            enrichedToReview,
-            enrichedReviewed,
-            enrichedMyOpen
-        )
-
-        // Helper to check if user has submitted a final review (approved or changes requested)
-        let hasSubmittedReview: (EnrichedPullRequest) -> Bool = { enriched in
-            enriched.reviews.contains { review in
-                review.author?.login == userLogin &&
-                (review.state == .approved || review.state == .changesRequested)
-            }
-        }
-
-        // Filter "To Review" to only PRs where current user hasn't submitted approval/changes requested
-        let toReviewFiltered = toReviewResult.filter { enriched in
-            let isMyPR = enriched.pr.author?.login == userLogin
-            return !isMyPR && !hasSubmittedReview(enriched)
-        }
-
-        // Also include PRs from reviewedResult where user only commented (not approved/changes requested)
-        let commentedOnly = reviewedResult.filter { enriched in
-            let isMyPR = enriched.pr.author?.login == userLogin
-            return !isMyPR && !hasSubmittedReview(enriched)
-        }
-
-        toReviewPRs = (toReviewFiltered + commentedOnly).uniqued()
-
-        // "Reviewed" shows PRs by OTHERS that user has submitted approval/changes requested
-        let alreadyReviewed = toReviewResult.filter { enriched in
-            let isMyPR = enriched.pr.author?.login == userLogin
-            return !isMyPR && hasSubmittedReview(enriched)
-        }
-        let otherReviewed = reviewedResult.filter { enriched in
-            let isMyPR = enriched.pr.author?.login == userLogin
-            return !isMyPR && hasSubmittedReview(enriched)
-        }
-        reviewedPRs = (alreadyReviewed + otherReviewed).uniqued()
-        myOpenPRs = myOpenResult
-
-        lastUpdate = Date()
-
-        // Save to cache
-        await cache.savePRCache(
-            toReview: toReviewPRs,
-            reviewed: reviewedPRs,
-            myPRs: myOpenPRs,
-            currentUser: currentUser
-        )
-
-        // Check for notifications on new/updated PRs
-        let filters = fetchNotificationFilters()
-        await checkNotifications(for: toReviewPRs, filters: filters)
-
-        // Check for notifications on my PRs (reviews/comments)
-        await checkMyPRNotifications(for: myOpenPRs)
     }
 
     private func enrichPRsSafe(_ prs: [PullRequest]) async -> [EnrichedPullRequest] {
