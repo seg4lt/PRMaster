@@ -55,6 +55,17 @@ cp -r .build/release/PRMaster.app /Applications/
 
 Download the latest universal binary (arm64 + x86_64) from [Releases](https://github.com/yourusername/prmaster/releases).
 
+### Prerequisites
+
+Install and authenticate GitHub CLI before running the app:
+
+```bash
+brew install gh
+gh auth login
+```
+
+### Running the App
+
 Since the app is not signed with an Apple Developer ID, you need to remove the quarantine flag before running:
 
 ```bash

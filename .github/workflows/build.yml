@@ -122,6 +122,14 @@ jobs:
           files: .build/universal/PRMaster.zip
           generate_release_notes: true
           body: |
+            ## Prerequisites
+
+            Install and authenticate GitHub CLI:
+            ```bash
+            brew install gh
+            gh auth login
+            ```
+
             ## Installation
 
             1. Download `PRMaster.zip` and extract it
@@ -134,5 +142,3 @@ jobs:
                mv /path/to/PRMaster.app /Applications/
                open /Applications/PRMaster.app
                ```
-
-            **Requirements:** macOS 14.0+, GitHub CLI (`gh`) installed and authenticated

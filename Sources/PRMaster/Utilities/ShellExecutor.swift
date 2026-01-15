@@ -28,6 +28,24 @@ actor ShellExecutor {
         process.standardOutput = pipe
         process.standardError = pipe
 
+        // Add common binary paths for GUI apps launched from Finder
+        var env = ProcessInfo.processInfo.environment
+        let home = env["HOME"] ?? NSHomeDirectory()
+        let additionalPaths = [
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/opt/local/bin",
+            "/opt/local/sbin",
+            "\(home)/.local/bin",
+            "\(home)/bin",
+            "\(home)/.nix-profile/bin"
+        ]
+        let currentPath = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        env["PATH"] = (additionalPaths + [currentPath]).joined(separator: ":")
+        process.environment = env
+
         do {
             try process.run()
             process.waitUntilExit()
