@@ -80,13 +80,27 @@ struct MyPRRowView: View {
                     .fontWeight(.medium)
                     .lineLimit(1)
 
-                HStack(spacing: 8) {
-                    Text(pr.pr.repository.shortName)
-                        .foregroundStyle(.secondary)
-                    Text("·")
-                        .foregroundStyle(.tertiary)
-                    Text("Created \(DateFormatters.shortDate(pr.pr.createdAt))")
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 8) {
+                        Text(pr.pr.repository.shortName)
+                            .foregroundStyle(.secondary)
+                        Text("·")
+                            .foregroundStyle(.tertiary)
+                        Text("Created \(DateFormatters.shortDate(pr.pr.createdAt))")
+                            .foregroundStyle(.secondary)
+                    }
+                    if let head = pr.detail?.headRefName, let base = pr.detail?.baseRefName {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.triangle.branch")
+                                .foregroundStyle(.tertiary)
+                            Text(head)
+                                .foregroundStyle(.blue)
+                            Image(systemName: "arrow.right")
+                                .foregroundStyle(.tertiary)
+                            Text(base)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 .font(.caption)
 

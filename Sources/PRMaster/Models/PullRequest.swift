@@ -120,6 +120,8 @@ struct DynamicCodingKey: CodingKey {
 }
 
 struct PRDetail: Codable {
+    let headRefName: String?
+    let baseRefName: String?
     let reviewDecision: ReviewDecision?
     let reviews: ReviewNodes?
     let reviewRequests: ReviewRequestNodes?

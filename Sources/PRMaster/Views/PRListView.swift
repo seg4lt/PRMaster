@@ -147,19 +147,33 @@ struct PRRowView: View {
     }
 
     private var metadataRow: some View {
-        HStack(spacing: 8) {
-            if let author = pr.pr.author {
-                Text(author.displayName)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                if let author = pr.pr.author {
+                    Text(author.displayName)
+                        .foregroundStyle(.secondary)
+                }
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                Text(pr.pr.timeAgo)
+                    .foregroundStyle(.secondary)
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                Text(pr.pr.repository.shortName)
                     .foregroundStyle(.secondary)
             }
-            Text("·")
-                .foregroundStyle(.tertiary)
-            Text(pr.pr.timeAgo)
-                .foregroundStyle(.secondary)
-            Text("·")
-                .foregroundStyle(.tertiary)
-            Text(pr.pr.repository.shortName)
-                .foregroundStyle(.secondary)
+            if let head = pr.detail?.headRefName, let base = pr.detail?.baseRefName {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .foregroundStyle(.tertiary)
+                    Text(head)
+                        .foregroundStyle(.blue)
+                    Image(systemName: "arrow.right")
+                        .foregroundStyle(.tertiary)
+                    Text(base)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .font(.caption)
     }

@@ -180,6 +180,8 @@ actor GitHubService {
         let command = "graphql batch \(repo) (\(numbers.count) PRs)"
 
         let prFragment = """
+              headRefName
+              baseRefName
               reviewDecision
               reviews(first: 50) {
                 nodes {
