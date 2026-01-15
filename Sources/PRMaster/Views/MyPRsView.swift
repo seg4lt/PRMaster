@@ -52,16 +52,20 @@ struct MyPRsView: View {
 
     private var listView: some View {
         ScrollView {
-            LazyVStack(spacing: 1) {
+            LazyVStack(spacing: 0) {
                 ForEach(viewModel.myOpenPRs) { pr in
-                    MyPRRowView(pr: pr, isSelected: selectedPR?.id == pr.id)
-                        .onTapGesture {
-                            if selectedPR?.id == pr.id {
-                                selectedPR = nil
-                            } else {
-                                selectedPR = pr
+                    VStack(spacing: 0) {
+                        MyPRRowView(pr: pr, isSelected: selectedPR?.id == pr.id)
+                            .onTapGesture {
+                                if selectedPR?.id == pr.id {
+                                    selectedPR = nil
+                                } else {
+                                    selectedPR = pr
+                                }
                             }
-                        }
+                        Divider()
+                            .padding(.leading, 12)
+                    }
                 }
             }
         }

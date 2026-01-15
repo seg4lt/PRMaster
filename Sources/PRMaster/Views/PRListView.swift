@@ -67,20 +67,24 @@ struct PRListView: View {
 
     private var listView: some View {
         ScrollView {
-            LazyVStack(spacing: 1) {
+            LazyVStack(spacing: 0) {
                 ForEach(prs) { pr in
-                    PRRowView(
-                        pr: pr,
-                        isSelected: selectedPR?.id == pr.id,
-                        isMyPR: pr.pr.author?.login == currentUser,
-                        isCompact: isCompact
-                    )
-                    .onTapGesture {
-                        if selectedPR?.id == pr.id {
-                            selectedPR = nil
-                        } else {
-                            selectedPR = pr
+                    VStack(spacing: 0) {
+                        PRRowView(
+                            pr: pr,
+                            isSelected: selectedPR?.id == pr.id,
+                            isMyPR: pr.pr.author?.login == currentUser,
+                            isCompact: isCompact
+                        )
+                        .onTapGesture {
+                            if selectedPR?.id == pr.id {
+                                selectedPR = nil
+                            } else {
+                                selectedPR = pr
+                            }
                         }
+                        Divider()
+                            .padding(.leading, 28)
                     }
                 }
             }
