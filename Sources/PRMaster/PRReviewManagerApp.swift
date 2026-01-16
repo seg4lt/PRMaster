@@ -218,6 +218,7 @@ struct PRReviewManagerApp: App {
                 .frame(width: 500, height: 700)
         } label: {
             MenuBarLabel()
+                .modelContainer(modelContainer)
         }
         .menuBarExtraStyle(.window)
     }
