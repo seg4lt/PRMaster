@@ -81,10 +81,12 @@ struct DateRangeSummary: Identifiable {
     var dateRange: DateRangeCommits
     var status: SummaryStatus
     let createdAt: Date
+    var repositories: [String]
 
-    init(id: UUID = UUID(), dateRange: DateRangeCommits, status: SummaryStatus, createdAt: Date = Date()) {
+    init(id: UUID = UUID(), dateRange: DateRangeCommits, status: SummaryStatus, createdAt: Date = Date(), repositories: [String] = []) {
         self.id = id
         self.dateRange = dateRange
+        self.repositories = repositories
         self.status = status
         self.createdAt = createdAt
     }

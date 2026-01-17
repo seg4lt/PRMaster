@@ -197,14 +197,15 @@ struct AISummaryView: View {
                         ForEach(Array(viewModel.summaries.enumerated()), id: \.element.id) { index, summary in
                             SummaryCard(
                                 summary: summary,
+                                availableRepos: viewModel.availableRepos,
                                 onRetry: {
                                     viewModel.retrySummary(at: index)
                                 },
                                 onDelete: {
                                     viewModel.deleteSummary(id: summary.id)
                                 },
-                                onUpdate: { startDate, endDate in
-                                    viewModel.updateSummary(id: summary.id, startDate: startDate, endDate: endDate)
+                                onUpdate: { startDate, endDate, repositories in
+                                    viewModel.updateSummary(id: summary.id, startDate: startDate, endDate: endDate, repositories: repositories)
                                 }
                             )
                         }

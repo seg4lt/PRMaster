@@ -3,22 +3,41 @@ import AppKit
 
 struct SummaryCard: View {
     let summary: DateRangeSummary
+    let availableRepos: [String]
     let onRetry: () -> Void
     let onDelete: () -> Void
-    let onUpdate: (Date, Date) -> Void
+    let onUpdate: (Date, Date, [String]) -> Void
 
     @State private var copied = false
     @State private var showingUpdatePopover = false
     @State private var newStartDate: Date
     @State private var newEndDate: Date
+    @State private var selectedRepos: Set<String>
+    @State private var repoSearchText = ""
 
-    init(summary: DateRangeSummary, onRetry: @escaping () -> Void, onDelete: @escaping () -> Void, onUpdate: @escaping (Date, Date) -> Void) {
+    init(summary: DateRangeSummary, availableRepos: [String], onRetry: @escaping () -> Void, onDelete: @escaping () -> Void, onUpdate: @escaping (Date, Date, [String]) -> Void) {
         self.summary = summary
+        self.availableRepos = availableRepos
         self.onRetry = onRetry
         self.onDelete = onDelete
         self.onUpdate = onUpdate
         self._newStartDate = State(initialValue: summary.dateRange.startDate)
         self._newEndDate = State(initialValue: summary.dateRange.endDate)
+        self._selectedRepos = State(initialValue: Set(summary.repositories))
+    }
+
+    private var filteredRepos: [String] {
+        let repos = repoSearchText.isEmpty
+            ? availableRepos
+            : availableRepos.filter { $0.localizedCaseInsensitiveContains(repoSearchText) }
+        return repos.sorted { a, b in
+            let aSelected = selectedRepos.contains(a)
+            let bSelected = selectedRepos.contains(b)
+            if aSelected != bSelected {
+                return aSelected
+            }
+            return a < b
+        }
     }
 
     var body: some View {
@@ -62,16 +81,18 @@ struct SummaryCard: View {
 
                         // Update button with popover
                         Button {
-                            // Reset dates to current summary's dates
+                            // Reset to current summary's values
                             newStartDate = summary.dateRange.startDate
                             newEndDate = summary.dateRange.endDate
+                            selectedRepos = Set(summary.repositories)
+                            repoSearchText = ""
                             showingUpdatePopover = true
                         } label: {
                             Image(systemName: "arrow.clockwise")
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.borderless)
-                        .help("Re-generate with new date range")
+                        .help("Re-generate with new settings")
                         .popover(isPresented: $showingUpdatePopover, arrowEdge: .bottom) {
                             updatePopoverContent
                         }
@@ -95,9 +116,10 @@ struct SummaryCard: View {
 
     private var updatePopoverContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Update Date Range")
+            Text("Update Summary")
                 .font(.headline)
 
+            // Date pickers
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Start")
@@ -118,6 +140,52 @@ struct SummaryCard: View {
                 }
             }
 
+            // Repository picker
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Repositories")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(selectedRepos.count) selected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                TextField("Search repos...", text: $repoSearchText)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(filteredRepos, id: \.self) { repo in
+                            Button {
+                                if selectedRepos.contains(repo) {
+                                    selectedRepos.remove(repo)
+                                } else {
+                                    selectedRepos.insert(repo)
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: selectedRepos.contains(repo) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(selectedRepos.contains(repo) ? .accentColor : .secondary)
+                                    Text(repo)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer()
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.vertical, 2)
+                        }
+                    }
+                }
+                .frame(height: 120)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+
             HStack {
                 Button("Cancel") {
                     showingUpdatePopover = false
@@ -128,13 +196,14 @@ struct SummaryCard: View {
 
                 Button("Re-generate") {
                     showingUpdatePopover = false
-                    onUpdate(newStartDate, newEndDate)
+                    onUpdate(newStartDate, newEndDate, Array(selectedRepos))
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(selectedRepos.isEmpty)
             }
         }
         .padding()
-        .frame(width: 280)
+        .frame(width: 320)
     }
 
     @ViewBuilder

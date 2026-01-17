@@ -222,7 +222,8 @@ class AISummaryViewModel: ObservableObject {
         let newSummary = DateRangeSummary(
             id: summaryId,
             dateRange: dateRange,
-            status: .pending
+            status: .pending,
+            repositories: Array(selectedRepos)
         )
 
         // Insert in sorted position (by startDate descending)
@@ -440,25 +441,27 @@ class AISummaryViewModel: ObservableObject {
         saveCachedSummaries()
     }
 
-    func updateSummary(id: UUID, startDate: Date, endDate: Date) {
+    func updateSummary(id: UUID, startDate: Date, endDate: Date, repositories: [String]) {
         guard let index = summaries.firstIndex(where: { $0.id == id }) else { return }
 
         let calendar = Calendar.current
         let rangeStart = calendar.startOfDay(for: startDate)
         let rangeEnd = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: endDate) ?? endDate
 
-        // Update the date range and re-generate
+        // Update the date range and repositories
         summaries[index].dateRange = DateRangeCommits(
             id: id,
             startDate: rangeStart,
             endDate: rangeEnd,
             commits: []
         )
+        summaries[index].repositories = repositories
         summaries[index].status = .loading
         isLoading = true
         statusMessage = "Updating summary..."
 
         let summaryId = id
+        let repos = repositories
 
         generationTask = Task.detached { [weak self] in
             guard let self = self else { return }
@@ -471,8 +474,6 @@ class AISummaryViewModel: ObservableObject {
                 }
                 return
             }
-
-            let repos = await MainActor.run { Array(self.selectedRepos) }
             let providerType = await MainActor.run { self.selectedProviderType }
             let model = await MainActor.run { self.selectedModel }
             let provider = providerType.createProvider()
@@ -586,7 +587,8 @@ class AISummaryViewModel: ObservableObject {
                 dateLabel: summary.dateRange.dateLabel,
                 commitCount: summary.dateRange.commitCount,
                 summaryText: text,
-                createdAt: summary.createdAt
+                createdAt: summary.createdAt,
+                repositories: summary.repositories
             )
         }
 
@@ -616,7 +618,8 @@ class AISummaryViewModel: ObservableObject {
                 id: cache.id,
                 dateRange: dateRange,
                 status: .completed(cache.summaryText),
-                createdAt: cache.createdAt
+                createdAt: cache.createdAt,
+                repositories: cache.repositories
             )
         }
     }
@@ -632,4 +635,5 @@ private struct CachedSummary: Codable {
     let commitCount: Int
     let summaryText: String
     let createdAt: Date
+    let repositories: [String]
 }
