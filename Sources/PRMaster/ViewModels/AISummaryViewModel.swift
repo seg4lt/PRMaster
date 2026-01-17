@@ -62,7 +62,7 @@ class AISummaryViewModel: ObservableObject {
     }
 
     /// Get the selected provider type from settings
-    private var selectedProviderType: AIProviderType {
+    var selectedProviderType: AIProviderType {
         let rawValue = UserDefaults.standard.string(forKey: "aiProvider") ?? AIProviderType.claude.rawValue
         return AIProviderType(rawValue: rawValue) ?? .claude
     }

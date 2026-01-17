@@ -122,18 +122,19 @@ struct AISummaryView: View {
 
     @ViewBuilder
     private var providerStatusBadge: some View {
+        let providerName = viewModel.selectedProviderType.displayName
         HStack(spacing: 4) {
             if viewModel.isCheckingProvider {
                 ProgressView()
                     .scaleEffect(0.6)
                     .frame(width: 12, height: 12)
-                Text("Checking Claude...")
+                Text("Checking \(providerName)...")
             } else {
                 switch viewModel.providerStatus {
                 case .available:
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
-                    Text("Claude Ready")
+                    Text("\(providerName) Ready")
                 case .notInstalled(let msg):
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.red)
