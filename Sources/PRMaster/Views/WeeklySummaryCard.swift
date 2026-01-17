@@ -43,16 +43,28 @@ struct SummaryCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
-            HStack {
-                Text(summary.dateRange.dateLabel)
-                    .font(.headline)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text(summary.dateRange.dateLabel)
+                            .font(.headline)
 
-                Text("\(summary.dateRange.commitCount) commits")
-                    .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.2))
-                    .clipShape(Capsule())
+                        Text("\(summary.dateRange.commitCount) commits")
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.2))
+                            .clipShape(Capsule())
+                    }
+
+                    if !summary.repositories.isEmpty {
+                        Text(summary.repositories.joined(separator: ", "))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
 
                 Spacer()
 
