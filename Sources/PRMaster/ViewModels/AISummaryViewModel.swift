@@ -13,6 +13,11 @@ class AISummaryViewModel: ObservableObject {
     @Published var error: String?
     @Published var statusMessage: String?
 
+    // Provider status (cached - only checked once)
+    @Published var providerStatus: AIProviderStatus = .notInstalled(message: "Not checked")
+    @Published var isCheckingProvider = false
+    private var hasCheckedProvider = false
+
     // Cache key based on date range and repo filter
     private var lastCacheKey: String = ""
 
@@ -40,6 +45,24 @@ class AISummaryViewModel: ObservableObject {
             if case .loading = summary.status { return true }
             return false
         }
+    }
+
+    /// Check provider status only once (cached)
+    func checkProviderStatusIfNeeded() async {
+        guard !hasCheckedProvider else { return }
+        hasCheckedProvider = true
+        isCheckingProvider = true
+
+        let provider = AIProviderType.claude.createProvider()
+        providerStatus = await provider.checkAvailability()
+
+        isCheckingProvider = false
+    }
+
+    /// Force re-check provider status
+    func recheckProviderStatus() async {
+        hasCheckedProvider = false
+        await checkProviderStatusIfNeeded()
     }
 
     func generateSummaries() {

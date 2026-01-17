@@ -77,7 +77,7 @@ actor ShellExecutor {
         return output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func executeGH(_ arguments: [String]) async throws -> String {
-        try await execute("gh", arguments: arguments)
+    func executeGH(_ arguments: [String], timeout: TimeInterval = 60) async throws -> String {
+        try await execute("gh", arguments: arguments, timeout: timeout)
     }
 }

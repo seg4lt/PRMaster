@@ -2,8 +2,6 @@ import SwiftUI
 
 struct AISummaryView: View {
     @ObservedObject private var viewModel = AISummaryViewModel.shared
-    @State private var providerStatus: AIProviderStatus = .notInstalled(message: "Checking Claude...")
-    @State private var isCheckingProvider = true
 
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -18,7 +16,7 @@ struct AISummaryView: View {
             contentSection
         }
         .task {
-            await checkProviderStatus()
+            await viewModel.checkProviderStatusIfNeeded()
         }
     }
 
@@ -78,7 +76,7 @@ struct AISummaryView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(viewModel.isLoading || isCheckingProvider)
+                .disabled(viewModel.isLoading || viewModel.isCheckingProvider)
 
                 if viewModel.isLoading {
                     Button("Cancel") {
@@ -102,13 +100,13 @@ struct AISummaryView: View {
     @ViewBuilder
     private var providerStatusBadge: some View {
         HStack(spacing: 4) {
-            if isCheckingProvider {
+            if viewModel.isCheckingProvider {
                 ProgressView()
                     .scaleEffect(0.6)
                     .frame(width: 12, height: 12)
                 Text("Checking Claude...")
             } else {
-                switch providerStatus {
+                switch viewModel.providerStatus {
                 case .available:
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
@@ -208,10 +206,4 @@ struct AISummaryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func checkProviderStatus() async {
-        isCheckingProvider = true
-        let provider = AIProviderType.claude.createProvider()
-        providerStatus = await provider.checkAvailability()
-        isCheckingProvider = false
-    }
 }
