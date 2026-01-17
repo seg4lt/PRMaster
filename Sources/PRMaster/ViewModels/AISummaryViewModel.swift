@@ -40,8 +40,9 @@ class AISummaryViewModel: ObservableObject {
         self.endDate = today
         self.startDate = calendar.date(byAdding: .month, value: -1, to: today) ?? today
 
-        // Load cached summaries
+        // Load cached summaries and selected repos
         loadCachedSummaries()
+        loadSelectedRepos()
     }
 
     var hasMorePending: Bool {
@@ -144,16 +145,32 @@ class AISummaryViewModel: ObservableObject {
         } else {
             selectedRepos.insert(repo)
         }
+        saveSelectedRepos()
     }
 
     func selectAllFilteredRepos() {
         for repo in filteredRepos {
             selectedRepos.insert(repo)
         }
+        saveSelectedRepos()
     }
 
     func deselectAllRepos() {
         selectedRepos.removeAll()
+        saveSelectedRepos()
+    }
+
+    private func loadSelectedRepos() {
+        if let data = UserDefaults.standard.data(forKey: "selectedRepos"),
+           let repos = try? JSONDecoder().decode(Set<String>.self, from: data) {
+            selectedRepos = repos
+        }
+    }
+
+    private func saveSelectedRepos() {
+        if let data = try? JSONEncoder().encode(selectedRepos) {
+            UserDefaults.standard.set(data, forKey: "selectedRepos")
+        }
     }
 
     func generateSummaries() {

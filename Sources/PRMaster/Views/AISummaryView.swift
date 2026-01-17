@@ -12,23 +12,22 @@ struct AISummaryView: View {
     }()
 
     var body: some View {
-        ZStack {
-            VStack(spacing: 0) {
-                headerSection
-                Divider()
-                contentSection
-            }
-
+        VStack(spacing: 0) {
+            headerSection
+                .zIndex(1) // Keep dropdown above dismiss layer
+            Divider()
+            contentSection
+        }
+        .background {
             // Full-screen tap to dismiss dropdown
             if isRepoPickerExpanded {
-                Color.clear
-                    .contentShape(Rectangle())
+                Color.black.opacity(0.001) // Nearly invisible but captures taps
+                    .ignoresSafeArea()
                     .onTapGesture {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             isRepoPickerExpanded = false
                         }
                     }
-                    .ignoresSafeArea()
             }
         }
         .task {
