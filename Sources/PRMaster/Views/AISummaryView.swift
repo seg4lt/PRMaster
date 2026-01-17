@@ -17,6 +17,7 @@ struct AISummaryView: View {
         }
         .task {
             await viewModel.checkProviderStatusIfNeeded()
+            await viewModel.loadReposIfNeeded()
         }
     }
 
@@ -51,12 +52,11 @@ struct AISummaryView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Repos (optional)")
+                    Text("Repositories")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    TextField("owner/repo, owner/repo2", text: $viewModel.repoFilter)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
+                    RepoPickerView(viewModel: viewModel)
+                        .frame(width: 250)
                 }
 
                 Spacer()
@@ -76,7 +76,7 @@ struct AISummaryView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(viewModel.isLoading || viewModel.isCheckingProvider)
+                .disabled(viewModel.isLoading || viewModel.isCheckingProvider || viewModel.selectedRepos.isEmpty)
 
                 if viewModel.isLoading {
                     Button("Cancel") {
@@ -198,10 +198,16 @@ struct AISummaryView: View {
             Text("No summaries yet")
                 .font(.headline)
 
-            Text("Select a date range and click Generate to\nsummarize your commit activity by week")
+            Text("Select repositories and a date range,\nthen click Generate to summarize your commits")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+
+            if viewModel.selectedRepos.isEmpty && !viewModel.isLoadingRepos {
+                Text("↑ Select at least one repository to get started")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

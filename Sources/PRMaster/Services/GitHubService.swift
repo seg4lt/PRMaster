@@ -374,56 +374,95 @@ actor GitHubService {
         }
     }
 
-    // MARK: - Commit Fetching
+    // MARK: - Repository Listing
 
-    func fetchUserCommits(
-        author: String,
-        startDate: Date,
-        endDate: Date,
-        repos: [String] = []
-    ) async throws -> [Commit] {
+    /// Fetch all repos the user has access to (personal + org)
+    func fetchAccessibleRepos() async throws -> [String] {
         let start = Date()
-
-        let dateFormatter = ISO8601DateFormatter()
-        dateFormatter.formatOptions = [.withFullDate]
-        let startStr = dateFormatter.string(from: startDate)
-        let endStr = dateFormatter.string(from: endDate)
-
-        // Build search query
-        var query = "author:\(author) author-date:\(startStr)..\(endStr)"
-
-        // Add repo filters if provided
-        if !repos.isEmpty {
-            let repoQueries = repos.map { "repo:\($0)" }.joined(separator: " ")
-            query += " \(repoQueries)"
-        }
-
-        // Format date range for display in logs
-        let displayFormatter = DateFormatter()
-        displayFormatter.dateFormat = "MMM d"
-        let displayRange = "\(displayFormatter.string(from: startDate)) - \(displayFormatter.string(from: endDate))"
-        let command = "search commits: \(displayRange)"
+        let command = "list repos"
 
         do {
-            let json = try await withRetry {
-                try await self.shell.executeGH([
-                    "api", "search/commits",
-                    "-X", "GET",
-                    "-H", "Accept: application/vnd.github.cloak-preview+json",
-                    "-f", "q=\(query)",
-                    "-f", "sort=author-date",
-                    "-f", "order=asc",
-                    "-f", "per_page=100"
-                ])
-            }
+            // Use gh repo list which shows all accessible repos
+            let output = try await shell.executeGH([
+                "repo", "list",
+                "--limit", "200",
+                "--json", "nameWithOwner",
+                "--jq", ".[].nameWithOwner"
+            ])
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
 
-            guard !json.isEmpty else { return [] }
-            let response = try decoder.decode(CommitSearchResponse.self, from: Data(json.utf8))
-            return response.items.map { $0.toCommit() }
+            guard !output.isEmpty else { return [] }
+            return output.components(separatedBy: "\n").filter { !$0.isEmpty }
         } catch {
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
             throw error
         }
+    }
+
+    // MARK: - Commit Fetching
+
+    /// Fetch commits from specific repos using per-repo API (fast, reliable)
+    func fetchCommitsFromRepos(
+        author: String,
+        startDate: Date,
+        endDate: Date,
+        repos: [String]
+    ) async throws -> [Commit] {
+        guard !repos.isEmpty else { return [] }
+
+        let dateFormatter = ISO8601DateFormatter()
+        dateFormatter.formatOptions = [.withFullDate]
+        let sinceStr = dateFormatter.string(from: startDate)
+        let untilStr = dateFormatter.string(from: endDate)
+
+        let displayFormatter = DateFormatter()
+        displayFormatter.dateFormat = "MMM d"
+        let displayRange = "\(displayFormatter.string(from: startDate)) - \(displayFormatter.string(from: endDate))"
+
+        var allCommits: [Commit] = []
+
+        for repo in repos {
+            let start = Date()
+            let command = "commits \(repo): \(displayRange)"
+
+            do {
+                let json = try await shell.executeGH([
+                    "api", "repos/\(repo)/commits",
+                    "-X", "GET",
+                    "-f", "author=\(author)",
+                    "-f", "since=\(sinceStr)",
+                    "-f", "until=\(untilStr)",
+                    "-f", "per_page=100"
+                ])
+                trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+                guard !json.isEmpty, json != "[]" else { continue }
+
+                let repoCommits = try decoder.decode([RepoCommitItem].self, from: Data(json.utf8))
+                allCommits.append(contentsOf: repoCommits.map { $0.toCommit(repository: repo) })
+            } catch {
+                trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+                // Continue with other repos even if one fails
+            }
+        }
+
+        // Sort by date ascending
+        return allCommits.sorted { $0.authorDate < $1.authorDate }
+    }
+
+    /// Fetch commits - uses per-repo API (repos required)
+    func fetchUserCommits(
+        author: String,
+        startDate: Date,
+        endDate: Date,
+        repos: [String]
+    ) async throws -> [Commit] {
+        // Always use per-repo API (more reliable)
+        return try await fetchCommitsFromRepos(
+            author: author,
+            startDate: startDate,
+            endDate: endDate,
+            repos: repos
+        )
     }
 }

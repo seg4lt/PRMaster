@@ -99,3 +99,27 @@ struct CommitSearchItem: Codable {
         )
     }
 }
+
+/// Response model for per-repo commits API
+struct RepoCommitItem: Codable {
+    let sha: String
+    let commit: RepoCommitDetail
+
+    struct RepoCommitDetail: Codable {
+        let message: String
+        let author: RepoCommitAuthor
+    }
+
+    struct RepoCommitAuthor: Codable {
+        let date: Date
+    }
+
+    func toCommit(repository: String) -> Commit {
+        Commit(
+            sha: sha,
+            message: commit.message,
+            authorDate: commit.author.date,
+            repository: repository
+        )
+    }
+}

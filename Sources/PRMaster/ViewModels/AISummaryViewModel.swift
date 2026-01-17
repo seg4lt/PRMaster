@@ -7,19 +7,32 @@ class AISummaryViewModel: ObservableObject {
 
     @Published var startDate: Date
     @Published var endDate: Date
-    @Published var repoFilter: String = ""
     @Published var weeklySummaries: [WeeklySummary] = []
     @Published var isLoading = false
     @Published var error: String?
     @Published var statusMessage: String?
 
+    // Repo selection
+    @Published var availableRepos: [String] = []
+    @Published var selectedRepos: Set<String> = []
+    @Published var isLoadingRepos = false
+    @Published var repoSearchText: String = ""
+
     // Provider status (cached - only checked once)
     @Published var providerStatus: AIProviderStatus = .notInstalled(message: "Not checked")
     @Published var isCheckingProvider = false
     private var hasCheckedProvider = false
+    private var hasLoadedRepos = false
 
     // Cache key based on date range and repo filter
     private var lastCacheKey: String = ""
+
+    var filteredRepos: [String] {
+        if repoSearchText.isEmpty {
+            return availableRepos
+        }
+        return availableRepos.filter { $0.localizedCaseInsensitiveContains(repoSearchText) }
+    }
 
     private var generationTask: Task<Void, Never>?
 
@@ -36,7 +49,8 @@ class AISummaryViewModel: ObservableObject {
 
     private var cacheKey: String {
         let formatter = ISO8601DateFormatter()
-        return "\(formatter.string(from: startDate))_\(formatter.string(from: endDate))_\(repoFilter)"
+        let repos = selectedRepos.sorted().joined(separator: ",")
+        return "\(formatter.string(from: startDate))_\(formatter.string(from: endDate))_\(repos)"
     }
 
     var hasMorePending: Bool {
@@ -65,7 +79,99 @@ class AISummaryViewModel: ObservableObject {
         await checkProviderStatusIfNeeded()
     }
 
+    /// Load available repos (cached for 1 week)
+    func loadReposIfNeeded() async {
+        guard !hasLoadedRepos else { return }
+        hasLoadedRepos = true
+
+        // Try to load from cache first
+        if let cached = loadCachedRepos(), !isCacheExpired() {
+            availableRepos = cached
+            return
+        }
+
+        // Fetch from API
+        isLoadingRepos = true
+        do {
+            let repos = try await GitHubService.shared.fetchAccessibleRepos()
+            availableRepos = repos.sorted()
+            saveCachedRepos(availableRepos)
+        } catch {
+            // If fetch fails but we have stale cache, use it
+            if let cached = loadCachedRepos() {
+                availableRepos = cached
+            } else {
+                self.error = "Failed to load repos: \(error.localizedDescription)"
+            }
+        }
+        isLoadingRepos = false
+    }
+
+    /// Force reload repos from API
+    func reloadRepos() async {
+        hasLoadedRepos = false
+        isLoadingRepos = true
+
+        do {
+            let repos = try await GitHubService.shared.fetchAccessibleRepos()
+            availableRepos = repos.sorted()
+            saveCachedRepos(availableRepos)
+        } catch {
+            self.error = "Failed to reload repos: \(error.localizedDescription)"
+        }
+
+        isLoadingRepos = false
+        hasLoadedRepos = true
+    }
+
+    private func loadCachedRepos() -> [String]? {
+        guard let data = UserDefaults.standard.data(forKey: "cachedRepos"),
+              let repos = try? JSONDecoder().decode([String].self, from: data) else {
+            return nil
+        }
+        return repos
+    }
+
+    private func saveCachedRepos(_ repos: [String]) {
+        if let data = try? JSONEncoder().encode(repos) {
+            UserDefaults.standard.set(data, forKey: "cachedRepos")
+            UserDefaults.standard.set(Date(), forKey: "cachedReposDate")
+        }
+    }
+
+    private func isCacheExpired() -> Bool {
+        guard let cacheDate = UserDefaults.standard.object(forKey: "cachedReposDate") as? Date else {
+            return true
+        }
+        let oneWeek: TimeInterval = 7 * 24 * 60 * 60
+        return Date().timeIntervalSince(cacheDate) > oneWeek
+    }
+
+    func toggleRepo(_ repo: String) {
+        if selectedRepos.contains(repo) {
+            selectedRepos.remove(repo)
+        } else {
+            selectedRepos.insert(repo)
+        }
+    }
+
+    func selectAllFilteredRepos() {
+        for repo in filteredRepos {
+            selectedRepos.insert(repo)
+        }
+    }
+
+    func deselectAllRepos() {
+        selectedRepos.removeAll()
+    }
+
     func generateSummaries() {
+        // Require at least one repo
+        guard !selectedRepos.isEmpty else {
+            error = "Please select at least one repository"
+            return
+        }
+
         // Cancel any existing generation
         generationTask?.cancel()
 
@@ -92,8 +198,8 @@ class AISummaryViewModel: ObservableObject {
                 return
             }
 
-            // Parse repo filter and dates
-            let repos = await MainActor.run { self.parseRepoFilter() }
+            // Get selected repos and dates
+            let repos = await MainActor.run { Array(self.selectedRepos) }
             let startDate = await MainActor.run { self.startDate }
             let endDate = await MainActor.run { self.endDate }
 
@@ -246,14 +352,6 @@ class AISummaryViewModel: ObservableObject {
     }
 
     // MARK: - Private Helpers
-
-    private func parseRepoFilter() -> [String] {
-        guard !repoFilter.isEmpty else { return [] }
-        return repoFilter
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-    }
 
     private func generateWeekRanges(from startDate: Date, to endDate: Date) -> [(start: Date, end: Date)] {
         let calendar = Calendar.current
