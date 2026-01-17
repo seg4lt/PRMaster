@@ -140,9 +140,11 @@ struct EnrichedCommit {
     let commit: Commit
     let diff: String?
 
-    /// Rough token estimate (4 chars ≈ 1 token)
+    /// Rough token estimate based on configurable ratio (default 2 chars/token for code)
     var estimatedTokens: Int {
-        (commit.message.count + (diff?.count ?? 0)) / 4
+        let ratio = UserDefaults.standard.integer(forKey: "tokenRatio")
+        let effectiveRatio = ratio > 0 ? ratio : 2  // Default to 2
+        return (commit.message.count + (diff?.count ?? 0)) / effectiveRatio
     }
 
     var sizeCategory: CommitSizeCategory {

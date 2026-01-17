@@ -184,8 +184,8 @@ actor CopilotProvider: AIProvider {
         return batches
     }
 
-    /// Max chars per diff to avoid token overflow (~15K chars ≈ 4K tokens)
-    private static let maxDiffChars = 15_000
+    /// Max chars per diff to avoid token overflow (~8K chars at 2:1 ratio ≈ 4K tokens)
+    private static let maxDiffChars = 8_000
 
     private func summarizeBatch(
         commits: [EnrichedCommit],
@@ -260,8 +260,8 @@ actor CopilotProvider: AIProvider {
             return commit.commit.message
         }
 
-        // Copilot has 64K token limit, use ~40K chars (~10K tokens) to leave room for prompt
-        let chunkSize = 40_000
+        // Copilot has 64K token limit, use ~20K chars at 2:1 ratio (~10K tokens) to leave room for prompt
+        let chunkSize = 20_000
         let chunks = diff.chunked(into: chunkSize)
 
         if chunks.count == 1 {

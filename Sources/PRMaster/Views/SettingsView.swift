@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage("badgeConfig") private var badgeConfigJSON: String = "[]"  // JSON array of BadgeSourceConfig
     @AppStorage("aiProvider") private var selectedProvider: String = AIProviderType.claude.rawValue
     @AppStorage("aiModel") private var selectedModel: String = AIProviderType.claude.defaultModel
+    @AppStorage("tokenRatio") private var tokenRatio: Int = 2
     @Query private var savedFilters: [NotificationFilter]
     @State private var ghStatus: GHStatus = .checking
     @State private var aiProviderStatus: AIProviderStatus = .notInstalled(message: "Checking...")
@@ -161,6 +162,22 @@ struct SettingsView: View {
 
             // Model selection
             modelSelectionView
+
+            // Token ratio (for Copilot)
+            if selectedProvider == AIProviderType.copilot.rawValue {
+                VStack(alignment: .leading, spacing: 4) {
+                    Stepper("Token ratio: \(tokenRatio) chars/token", value: $tokenRatio, in: 1...4)
+
+                    Text("Lower = more accurate for code, fewer tokens per batch")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Text("If you get 'exceeds token limit' errors, try lowering this value")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+                .padding(.top, 4)
+            }
 
             Text("Used for AI Weekly Summary feature")
                 .font(.caption)
