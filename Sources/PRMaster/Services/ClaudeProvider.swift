@@ -207,7 +207,7 @@ actor ClaudeProvider: AIProvider {
             \(commit.message)
             """
 
-            if let diff = enriched.truncatedDiff {
+            if let diff = enriched.diff {
                 entry += """
 
                 **Diff:**
@@ -251,6 +251,46 @@ actor ClaudeProvider: AIProvider {
         """
 
         return try await executeClaudePrompt(prompt: prompt, displayPrompt: "Summarize \(weekLabel) (\(commits.count) commits with diffs)")
+    }
+
+    /// Summarize a huge commit by chunking its diff into manageable pieces
+    func summarizeHugeCommit(_ commit: EnrichedCommit) async throws -> String {
+        guard let diff = commit.diff else {
+            return commit.commit.message
+        }
+
+        let chunkSize = 200_000  // ~50K tokens per chunk
+        let chunks = diff.chunked(into: chunkSize)
+
+        if chunks.count == 1 {
+            // Not actually huge, just return it
+            return diff
+        }
+
+        // Summarize each chunk
+        var chunkSummaries: [String] = []
+        for (index, chunk) in chunks.enumerated() {
+            let prompt = """
+            Summarize this portion (\(index + 1)/\(chunks.count)) of a code diff:
+
+            ```diff
+            \(chunk)
+            ```
+
+            List the key changes in this diff section as concise bullet points.
+            Focus on WHAT changed (files, functions, features), not line-by-line details.
+            """
+
+            let summary = try await executeClaudePrompt(
+                prompt: prompt,
+                displayPrompt: "Chunk \(index + 1)/\(chunks.count) of \(commit.commit.shortSha)"
+            )
+            chunkSummaries.append(summary)
+        }
+
+        // Combine chunk summaries
+        let combined = chunkSummaries.joined(separator: "\n\n")
+        return combined
     }
 
     /// Combine multiple batch summaries into a final weekly summary
@@ -347,5 +387,21 @@ private struct ClaudeResponse: Codable {
         case result
         case costUsd = "cost_usd"
         case sessionId = "session_id"
+    }
+}
+
+// MARK: - String Chunking Extension
+
+extension String {
+    func chunked(into size: Int) -> [String] {
+        guard size > 0, count > size else { return [self] }
+        var chunks: [String] = []
+        var start = startIndex
+        while start < endIndex {
+            let end = index(start, offsetBy: size, limitedBy: endIndex) ?? endIndex
+            chunks.append(String(self[start..<end]))
+            start = end
+        }
+        return chunks
     }
 }

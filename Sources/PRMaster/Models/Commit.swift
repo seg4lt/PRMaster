@@ -154,14 +154,4 @@ struct EnrichedCommit {
         }
     }
 
-    /// Truncate diff if too large (200KB limit with note)
-    var truncatedDiff: String? {
-        guard let diff = diff else { return nil }
-        let maxChars = 200_000
-        if diff.count <= maxChars {
-            return diff
-        }
-        let truncated = String(diff.prefix(maxChars))
-        return truncated + "\n\n[... diff truncated, was \(diff.count) characters ...]"
-    }
 }

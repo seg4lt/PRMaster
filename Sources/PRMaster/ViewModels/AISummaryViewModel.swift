@@ -292,9 +292,26 @@ class AISummaryViewModel: ObservableObject {
                         if Task.isCancelled { break }
 
                         // Create enriched commits
-                        let enrichedCommits = commits.map { commit in
+                        var enrichedCommits = commits.map { commit in
                             EnrichedCommit(commit: commit, diff: diffs[commit.sha])
                         }
+
+                        // Pre-process huge commits by chunking and summarizing their diffs
+                        let claudeProvider = provider as! ClaudeProvider
+                        var processedCommits: [EnrichedCommit] = []
+                        for enriched in enrichedCommits {
+                            if enriched.sizeCategory == .huge {
+                                await MainActor.run {
+                                    self.statusMessage = "Summarizing large diff for \(enriched.commit.shortSha)..."
+                                }
+                                let summary = try await claudeProvider.summarizeHugeCommit(enriched)
+                                // Create new EnrichedCommit with summary instead of full diff
+                                processedCommits.append(EnrichedCommit(commit: enriched.commit, diff: summary))
+                            } else {
+                                processedCommits.append(enriched)
+                            }
+                        }
+                        enrichedCommits = processedCommits
 
                         // Summarize this week with diffs
                         let batches = CommitBatcher.createBatches(from: enrichedCommits)
@@ -306,7 +323,6 @@ class AISummaryViewModel: ObservableObject {
                             }
                         }
 
-                        let claudeProvider = provider as! ClaudeProvider
                         let result = try await claudeProvider.summarizeWeekEnriched(commits: enrichedCommits, weekLabel: weekLabel)
 
                         if !Task.isCancelled {
