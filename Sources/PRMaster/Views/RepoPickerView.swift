@@ -56,13 +56,10 @@ struct RepoPickerView: View {
         VStack(spacing: 8) {
             RepoListPicker(
                 availableRepos: viewModel.availableRepos,
-                selectedRepos: $viewModel.selectedRepos,
-                searchText: $viewModel.repoSearchText,
+                selectedRepos: viewModel.selectedReposBinding,
+                searchText: viewModel.repoSearchTextBinding,
                 height: 180
             )
-            .onChange(of: viewModel.selectedRepos) { _ in
-                viewModel.saveSelectedReposPublic()
-            }
         }
         .padding(10)
         .frame(width: 280)
