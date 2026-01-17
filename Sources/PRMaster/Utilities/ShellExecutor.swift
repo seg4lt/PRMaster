@@ -40,7 +40,9 @@ actor ShellExecutor {
             "/opt/local/sbin",
             "\(home)/.local/bin",
             "\(home)/bin",
-            "\(home)/.nix-profile/bin"
+            "\(home)/.nix-profile/bin",
+            "\(home)/.npm-global/bin",
+            "\(home)/.claude/local"
         ]
         let currentPath = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         env["PATH"] = (additionalPaths + [currentPath]).joined(separator: ":")
