@@ -282,12 +282,32 @@ class AISummaryViewModel: ObservableObject {
                             self.weeklySummaries[index].status = .completed("No commits this week.")
                         }
                     } else {
-                        // Summarize this week
+                        // Fetch diffs for commits
                         await MainActor.run {
-                            self.statusMessage = "Summarizing \(weekLabel) (\(commits.count) commits)..."
+                            self.statusMessage = "Fetching diffs for \(weekLabel) (\(commits.count) commits)..."
                         }
 
-                        let result = try await provider.summarizeWeek(commits: commits, weekLabel: weekLabel)
+                        let diffs = await GitHubService.shared.fetchCommitDiffs(commits: commits)
+
+                        if Task.isCancelled { break }
+
+                        // Create enriched commits
+                        let enrichedCommits = commits.map { commit in
+                            EnrichedCommit(commit: commit, diff: diffs[commit.sha])
+                        }
+
+                        // Summarize this week with diffs
+                        let batches = CommitBatcher.createBatches(from: enrichedCommits)
+                        await MainActor.run {
+                            if batches.count > 1 {
+                                self.statusMessage = "Summarizing \(weekLabel) (\(commits.count) commits in \(batches.count) batches)..."
+                            } else {
+                                self.statusMessage = "Summarizing \(weekLabel) (\(commits.count) commits)..."
+                            }
+                        }
+
+                        let claudeProvider = provider as! ClaudeProvider
+                        let result = try await claudeProvider.summarizeWeekEnriched(commits: enrichedCommits, weekLabel: weekLabel)
 
                         if !Task.isCancelled {
                             await MainActor.run {
@@ -321,24 +341,45 @@ class AISummaryViewModel: ObservableObject {
 
         let summary = weeklySummaries[index]
         weeklySummaries[index].status = .loading
+        statusMessage = "Retrying \(summary.week.weekLabel)..."
 
         Task.detached { [weak self] in
             guard let self = self else { return }
 
-            let provider = AIProviderType.claude.createProvider()
+            let commits = summary.week.commits
+            let weekLabel = summary.week.weekLabel
 
             do {
-                let result = try await provider.summarizeWeek(
-                    commits: summary.week.commits,
-                    weekLabel: summary.week.weekLabel
+                // Re-fetch diffs for the retry
+                await MainActor.run {
+                    self.statusMessage = "Fetching diffs for \(weekLabel)..."
+                }
+
+                let diffs = await GitHubService.shared.fetchCommitDiffs(commits: commits)
+
+                // Create enriched commits
+                let enrichedCommits = commits.map { commit in
+                    EnrichedCommit(commit: commit, diff: diffs[commit.sha])
+                }
+
+                await MainActor.run {
+                    self.statusMessage = "Summarizing \(weekLabel)..."
+                }
+
+                let provider = ClaudeProvider()
+                let result = try await provider.summarizeWeekEnriched(
+                    commits: enrichedCommits,
+                    weekLabel: weekLabel
                 )
                 await MainActor.run {
                     self.weeklySummaries[index].status = .completed(result)
+                    self.statusMessage = nil
                     self.saveCachedSummaries()
                 }
             } catch {
                 await MainActor.run {
                     self.weeklySummaries[index].status = .error(error.localizedDescription)
+                    self.statusMessage = nil
                 }
             }
         }

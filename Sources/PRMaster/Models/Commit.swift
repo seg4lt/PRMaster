@@ -126,3 +126,42 @@ struct RepoCommitItem: Codable {
         )
     }
 }
+
+// MARK: - Enriched Commit (with diff)
+
+enum CommitSizeCategory {
+    case small   // < 2K tokens - batch up to 30
+    case medium  // 2K-10K tokens - batch 3-6
+    case large   // 10K-50K tokens - individual
+    case huge    // > 50K tokens - truncate
+}
+
+struct EnrichedCommit {
+    let commit: Commit
+    let diff: String?
+
+    /// Rough token estimate (4 chars ≈ 1 token)
+    var estimatedTokens: Int {
+        (commit.message.count + (diff?.count ?? 0)) / 4
+    }
+
+    var sizeCategory: CommitSizeCategory {
+        switch estimatedTokens {
+        case 50_001...: return .huge
+        case 10_001...50_000: return .large
+        case 2_001...10_000: return .medium
+        default: return .small
+        }
+    }
+
+    /// Truncate diff if too large (200KB limit with note)
+    var truncatedDiff: String? {
+        guard let diff = diff else { return nil }
+        let maxChars = 200_000
+        if diff.count <= maxChars {
+            return diff
+        }
+        let truncated = String(diff.prefix(maxChars))
+        return truncated + "\n\n[... diff truncated, was \(diff.count) characters ...]"
+    }
+}

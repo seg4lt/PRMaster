@@ -465,4 +465,89 @@ actor GitHubService {
             repos: repos
         )
     }
+
+    // MARK: - Commit Diffs
+
+    /// Fetch diff for a single commit
+    func fetchCommitDiff(repo: String, sha: String) async throws -> String {
+        let start = Date()
+        let command = "diff \(repo.components(separatedBy: "/").last ?? repo):\(sha.prefix(7))"
+
+        do {
+            // Use Accept header to get raw diff format
+            let diff = try await shell.executeGH([
+                "api", "repos/\(repo)/commits/\(sha)",
+                "-H", "Accept: application/vnd.github.diff"
+            ])
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+            return diff
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
+    /// Fetch diffs for multiple commits (parallel with concurrency limit)
+    func fetchCommitDiffs(commits: [Commit], concurrencyLimit: Int = 5) async -> [String: String] {
+        // Group commits by repo
+        var commitsByRepo: [String: [Commit]] = [:]
+        for commit in commits {
+            commitsByRepo[commit.repository, default: []].append(commit)
+        }
+
+        var allDiffs: [String: String] = [:]
+
+        // Process each repo's commits with limited concurrency
+        await withTaskGroup(of: [(String, String)].self) { group in
+            for (repo, repoCommits) in commitsByRepo {
+                group.addTask {
+                    var repoDiffs: [(String, String)] = []
+
+                    // Use a semaphore-like pattern with chunks
+                    for chunk in repoCommits.chunked(into: concurrencyLimit) {
+                        await withTaskGroup(of: (String, String?).self) { chunkGroup in
+                            for commit in chunk {
+                                chunkGroup.addTask {
+                                    do {
+                                        let diff = try await self.fetchCommitDiff(repo: repo, sha: commit.sha)
+                                        return (commit.sha, diff)
+                                    } catch {
+                                        // Return nil on failure - we'll proceed without the diff
+                                        return (commit.sha, nil)
+                                    }
+                                }
+                            }
+
+                            for await (sha, diff) in chunkGroup {
+                                if let diff = diff {
+                                    repoDiffs.append((sha, diff))
+                                }
+                            }
+                        }
+                    }
+
+                    return repoDiffs
+                }
+            }
+
+            for await repoDiffs in group {
+                for (sha, diff) in repoDiffs {
+                    allDiffs[sha] = diff
+                }
+            }
+        }
+
+        return allDiffs
+    }
+}
+
+// MARK: - Array Extension for Chunking
+
+extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else { return [self] }
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
+        }
+    }
 }
