@@ -9,17 +9,13 @@ struct SettingsView: View {
     @AppStorage("notificationsEnabled") private var notificationsEnabled: Bool = true
     @AppStorage("onlyFilterNotifications") private var onlyFilterNotifications: Bool = false
     @AppStorage("myPRNotificationsEnabled") private var myPRNotificationsEnabled: Bool = true
-    @AppStorage("badgeSource") private var badgeSource: String = "toReview"
-    @AppStorage("badgeFilterId") private var badgeFilterId: String = ""
-    @AppStorage("badgeConfig") private var badgeConfigJSON: String = "[]"  // JSON array of BadgeSourceConfig
+    @AppStorage("badgeConfig") private var badgeConfigJSON: String = "[]"
     @AppStorage("aiProvider") private var selectedProvider: String = AIProviderType.claude.rawValue
     @AppStorage("aiModel") private var selectedModel: String = AIProviderType.claude.defaultModel
     @AppStorage("tokenRatio") private var tokenRatio: Int = 2
     @Query private var savedFilters: [NotificationFilter]
-    @State private var ghStatus: GHStatus = .checking
-    @State private var aiProviderStatus: AIProviderStatus = .notInstalled(message: "Checking...")
-    @State private var copilotModels: [String] = []
-    @State private var isLoadingModels = false
+
+    @StateObject private var viewModel = SettingsViewModel.shared
 
     private var badgeConfigs: [BadgeSourceConfig] {
         (try? JSONDecoder().decode([BadgeSourceConfig].self, from: Data(badgeConfigJSON.utf8))) ?? []
@@ -55,13 +51,6 @@ struct SettingsView: View {
         }
     }
 
-    enum GHStatus {
-        case checking
-        case authenticated(user: String)
-        case notAuthenticated
-        case notInstalled
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -70,11 +59,11 @@ struct SettingsView: View {
 
                 Divider()
 
-                ghStatusSection
+                GHStatusSection(viewModel: viewModel)
 
                 Divider()
 
-                pollingSection
+                PollingSection(pollingInterval: $pollingInterval)
 
                 Divider()
 
@@ -86,7 +75,11 @@ struct SettingsView: View {
 
                 Divider()
 
-                notificationSection
+                NotificationSection(
+                    notificationsEnabled: $notificationsEnabled,
+                    onlyFilterNotifications: $onlyFilterNotifications,
+                    myPRNotificationsEnabled: $myPRNotificationsEnabled
+                )
 
                 Divider()
 
@@ -94,7 +87,12 @@ struct SettingsView: View {
 
                 Divider()
 
-                aiProviderSection
+                AIProviderSection(
+                    selectedProvider: $selectedProvider,
+                    selectedModel: $selectedModel,
+                    tokenRatio: $tokenRatio,
+                    viewModel: viewModel
+                )
 
                 Divider()
 
@@ -106,247 +104,18 @@ struct SettingsView: View {
             .padding(12)
         }
         .task {
-            await checkGHStatus()
-            await checkAIProviderStatus()
-            await loadModelsIfNeeded()
+            await viewModel.checkGHStatus()
+            await viewModel.checkAIProviderStatus(for: selectedProvider)
+            await viewModel.loadModelsIfNeeded(for: selectedProvider)
         }
         .onChange(of: selectedProvider) { _, newValue in
             Task {
-                await checkAIProviderStatus()
-                // Reset model to default when switching providers
+                await viewModel.checkAIProviderStatus(for: newValue)
                 if let providerType = AIProviderType(rawValue: newValue) {
                     selectedModel = providerType.defaultModel
                 }
-                await loadModelsIfNeeded()
+                await viewModel.loadModelsIfNeeded(for: newValue)
             }
-        }
-    }
-
-    private var aiProviderSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("AI Provider")
-                .font(.subheadline)
-                .fontWeight(.medium)
-
-            Picker("Provider", selection: $selectedProvider) {
-                ForEach(AIProviderType.allCases, id: \.rawValue) { provider in
-                    Text(provider.displayName).tag(provider.rawValue)
-                }
-            }
-            .pickerStyle(.menu)
-            .frame(width: 200)
-
-            HStack(spacing: 6) {
-                switch aiProviderStatus {
-                case .available:
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                    Text("\(currentProviderName) ready")
-                case .notInstalled(let msg):
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.red)
-                    Text(msg)
-                    installButton
-                case .notAuthenticated(let msg):
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text(msg)
-                    loginButton
-                case .error(let msg):
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.red)
-                    Text(msg)
-                }
-            }
-            .font(.caption)
-
-            // Model selection
-            modelSelectionView
-
-            // Token ratio (for Copilot)
-            if selectedProvider == AIProviderType.copilot.rawValue {
-                VStack(alignment: .leading, spacing: 4) {
-                    Stepper("Token ratio: \(tokenRatio) chars/token", value: $tokenRatio, in: 1...4)
-
-                    Text("Lower = more accurate for code, fewer tokens per batch")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    Text("If you get 'exceeds token limit' errors, try lowering this value")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                }
-                .padding(.top, 4)
-            }
-
-            Text("Used for AI Weekly Summary feature")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder
-    private var installButton: some View {
-        if selectedProvider == AIProviderType.claude.rawValue {
-            Button("Install Claude Code") {
-                if let url = URL(string: "https://claude.ai/code") {
-                    NSWorkspace.shared.open(url)
-                }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-        } else {
-            Button("Install Copilot CLI") {
-                if let url = URL(string: "https://githubnext.com/projects/copilot-cli") {
-                    NSWorkspace.shared.open(url)
-                }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-        }
-    }
-
-    @ViewBuilder
-    private var loginButton: some View {
-        if selectedProvider == AIProviderType.claude.rawValue {
-            Button("Run claude login") {
-                openTerminalWithCommand("claude login")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-        } else {
-            Button("Run copilot auth") {
-                openTerminalWithCommand("copilot auth")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-        }
-    }
-
-    @ViewBuilder
-    private var modelSelectionView: some View {
-        if let providerType = AIProviderType(rawValue: selectedProvider) {
-            HStack {
-                Text("Model:")
-                    .font(.caption)
-
-                if providerType == .copilot {
-                    if isLoadingModels {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                        Text("Loading models...")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if copilotModels.isEmpty {
-                        TextField("Model name", text: $selectedModel)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 150)
-                    } else {
-                        Picker("", selection: $selectedModel) {
-                            ForEach(copilotModels, id: \.self) { model in
-                                Text(model).tag(model)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 200)
-                    }
-                } else {
-                    // Claude - static list
-                    Picker("", selection: $selectedModel) {
-                        ForEach(providerType.availableModels, id: \.self) { model in
-                            Text(model).tag(model)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 120)
-                }
-            }
-            .padding(.top, 4)
-        }
-    }
-
-    private var currentProviderName: String {
-        AIProviderType(rawValue: selectedProvider)?.displayName ?? "Unknown"
-    }
-
-    private func checkAIProviderStatus() async {
-        guard let providerType = AIProviderType(rawValue: selectedProvider) else { return }
-        let provider = providerType.createProvider()
-        aiProviderStatus = await provider.checkAvailability()
-    }
-
-    private func loadModelsIfNeeded() async {
-        guard let providerType = AIProviderType(rawValue: selectedProvider),
-              providerType == .copilot else {
-            return
-        }
-
-        isLoadingModels = true
-        copilotModels = await CopilotProvider.fetchAvailableModels()
-        isLoadingModels = false
-    }
-
-    private var ghStatusSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("GitHub CLI Status")
-                .font(.subheadline)
-                .fontWeight(.medium)
-
-            HStack {
-                switch ghStatus {
-                case .checking:
-                    ProgressView()
-                        .scaleEffect(0.7)
-                    Text("Checking...")
-                        .foregroundStyle(.secondary)
-                case .authenticated(let user):
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                    Text("Authenticated as @\(user)")
-                case .notAuthenticated:
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .foregroundColor(.orange)
-                    Text("Not authenticated")
-                    Button("Run gh auth login") {
-                        openTerminalWithCommand("gh auth login")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                case .notInstalled:
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.red)
-                    Text("gh CLI not installed")
-                    Button("Install Homebrew gh") {
-                        openTerminalWithCommand("brew install gh")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            }
-            .font(.caption)
-        }
-    }
-
-    private var pollingSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Refresh Interval")
-                .font(.subheadline)
-                .fontWeight(.medium)
-
-            Picker("", selection: $pollingInterval) {
-                Text("1 minute").tag(60.0)
-                Text("2 minutes").tag(120.0)
-                Text("5 minutes").tag(300.0)
-                Text("10 minutes").tag(600.0)
-                Text("15 minutes").tag(900.0)
-                Text("30 minutes").tag(1800.0)
-            }
-            .pickerStyle(.menu)
-            .frame(width: 150)
-
-            Text("How often to check for new PRs")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -358,7 +127,7 @@ struct SettingsView: View {
 
             Toggle("Launch at login", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, newValue in
-                    setLaunchAtLogin(newValue)
+                    viewModel.setLaunchAtLogin(newValue)
                 }
 
             Text("Automatically start when you log in")
@@ -381,43 +150,6 @@ struct SettingsView: View {
         }
     }
 
-    private var notificationSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Notifications")
-                .font(.subheadline)
-                .fontWeight(.medium)
-
-            Toggle("Enable notifications", isOn: $notificationsEnabled)
-
-            if notificationsEnabled {
-                Toggle("Only notify for filter matches", isOn: $onlyFilterNotifications)
-                    .padding(.leading, 16)
-
-                if onlyFilterNotifications {
-                    Text("Notifications only sent when a PR matches an enabled filter")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 16)
-                } else {
-                    Text("Notifications sent for all new/updated PRs in To Review")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 16)
-                }
-            }
-
-            Divider()
-                .padding(.vertical, 4)
-
-            Toggle("Notify on my PR activity", isOn: $myPRNotificationsEnabled)
-
-            Text("Get notified when someone reviews or comments on your PRs")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.leading, 16)
-        }
-    }
-
     private var badgeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Menu Bar Badge")
@@ -428,7 +160,6 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            // Built-in sources as checkboxes with prefix/suffix
             ForEach(["toReview", "reviewed", "myPRs"], id: \.self) { source in
                 badgeSourceRow(
                     source: source,
@@ -436,7 +167,6 @@ struct SettingsView: View {
                 )
             }
 
-            // Saved filters
             if !savedFilters.filter({ $0.isEnabled }).isEmpty {
                 Text("Saved filters:")
                     .font(.caption)
@@ -451,7 +181,6 @@ struct SettingsView: View {
                 }
             }
 
-            // Preview
             if !badgeConfigs.isEmpty {
                 Divider()
                     .padding(.vertical, 4)
@@ -509,50 +238,5 @@ struct SettingsView: View {
         badgeConfigs.map { config in
             "\(config.prefix)#\(config.suffix)"
         }.joined(separator: " ")
-    }
-
-    private func checkGHStatus() async {
-        let installed = await GitHubService.shared.checkGHInstalled()
-        if !installed {
-            ghStatus = .notInstalled
-            return
-        }
-
-        let authenticated = await GitHubService.shared.checkGHAuthenticated()
-        if !authenticated {
-            ghStatus = .notAuthenticated
-            return
-        }
-
-        if let user = try? await GitHubService.shared.getCurrentUser() {
-            ghStatus = .authenticated(user: user)
-        } else {
-            ghStatus = .notAuthenticated
-        }
-    }
-
-    private func openTerminalWithCommand(_ command: String) {
-        let script = """
-        tell application "Terminal"
-            activate
-            do script "\(command)"
-        end tell
-        """
-        if let appleScript = NSAppleScript(source: script) {
-            var error: NSDictionary?
-            appleScript.executeAndReturnError(&error)
-        }
-    }
-
-    private func setLaunchAtLogin(_ enabled: Bool) {
-        do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-        } catch {
-            print("Failed to set launch at login: \(error)")
-        }
     }
 }
