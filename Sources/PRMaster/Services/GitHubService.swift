@@ -468,6 +468,43 @@ actor GitHubService {
 
     // MARK: - Commit Diffs
 
+    /// Filter out lock files and binary diffs from a commit diff
+    private func filterDiff(_ diff: String) -> String {
+        // Lock file patterns to exclude
+        let lockFilePatterns = [
+            "package-lock.json",
+            "yarn.lock",
+            "pnpm-lock.yaml",
+            "Gemfile.lock",
+            "Cargo.lock",
+            "poetry.lock",
+            "Podfile.lock",
+            "composer.lock",
+            "go.sum",
+            "flake.lock"
+        ]
+
+        // Split diff into file sections
+        let sections = diff.components(separatedBy: "diff --git ")
+
+        let filtered = sections.filter { section in
+            guard !section.isEmpty else { return false }
+
+            // Check for binary file indicator
+            if section.contains("Binary files") { return false }
+
+            // Check for lock files
+            let firstLine = section.components(separatedBy: "\n").first ?? ""
+            for pattern in lockFilePatterns {
+                if firstLine.contains(pattern) { return false }
+            }
+
+            return true
+        }
+
+        return filtered.map { "diff --git " + $0 }.joined()
+    }
+
     /// Fetch diff for a single commit
     func fetchCommitDiff(repo: String, sha: String) async throws -> String {
         let start = Date()
@@ -481,7 +518,7 @@ actor GitHubService {
                 ])
             }
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
-            return diff
+            return filterDiff(diff)
         } catch {
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
             throw error
