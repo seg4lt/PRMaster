@@ -203,8 +203,8 @@ struct AISummaryView: View {
                                 onDelete: {
                                     viewModel.deleteSummary(id: summary.id)
                                 },
-                                onUpdate: {
-                                    viewModel.updateSummary(id: summary.id)
+                                onUpdate: { startDate, endDate in
+                                    viewModel.updateSummary(id: summary.id, startDate: startDate, endDate: endDate)
                                 }
                             )
                         }

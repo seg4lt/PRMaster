@@ -439,7 +439,7 @@ class AISummaryViewModel: ObservableObject {
         saveCachedSummaries()
     }
 
-    func updateSummary(id: UUID) {
+    func updateSummary(id: UUID, startDate: Date, endDate: Date) {
         guard let index = summaries.firstIndex(where: { $0.id == id }) else { return }
 
         let calendar = Calendar.current

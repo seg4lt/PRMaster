@@ -5,8 +5,21 @@ struct SummaryCard: View {
     let summary: DateRangeSummary
     let onRetry: () -> Void
     let onDelete: () -> Void
-    let onUpdate: () -> Void
+    let onUpdate: (Date, Date) -> Void
+
     @State private var copied = false
+    @State private var showingUpdatePopover = false
+    @State private var newStartDate: Date
+    @State private var newEndDate: Date
+
+    init(summary: DateRangeSummary, onRetry: @escaping () -> Void, onDelete: @escaping () -> Void, onUpdate: @escaping (Date, Date) -> Void) {
+        self.summary = summary
+        self.onRetry = onRetry
+        self.onDelete = onDelete
+        self.onUpdate = onUpdate
+        self._newStartDate = State(initialValue: summary.dateRange.startDate)
+        self._newEndDate = State(initialValue: summary.dateRange.endDate)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -47,15 +60,21 @@ struct SummaryCard: View {
                         .buttonStyle(.borderless)
                         .help("Copy summary")
 
-                        // Update button
+                        // Update button with popover
                         Button {
-                            onUpdate()
+                            // Reset dates to current summary's dates
+                            newStartDate = summary.dateRange.startDate
+                            newEndDate = summary.dateRange.endDate
+                            showingUpdatePopover = true
                         } label: {
                             Image(systemName: "arrow.clockwise")
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.borderless)
-                        .help("Re-generate with current date range")
+                        .help("Re-generate with new date range")
+                        .popover(isPresented: $showingUpdatePopover, arrowEdge: .bottom) {
+                            updatePopoverContent
+                        }
                     }
                 }
             }
@@ -72,6 +91,50 @@ struct SummaryCard: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
         )
+    }
+
+    private var updatePopoverContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Update Date Range")
+                .font(.headline)
+
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Start")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    DatePicker("", selection: $newStartDate, displayedComponents: .date)
+                        .labelsHidden()
+                        .datePickerStyle(.compact)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("End")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    DatePicker("", selection: $newEndDate, displayedComponents: .date)
+                        .labelsHidden()
+                        .datePickerStyle(.compact)
+                }
+            }
+
+            HStack {
+                Button("Cancel") {
+                    showingUpdatePopover = false
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button("Re-generate") {
+                    showingUpdatePopover = false
+                    onUpdate(newStartDate, newEndDate)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+        .frame(width: 280)
     }
 
     @ViewBuilder
