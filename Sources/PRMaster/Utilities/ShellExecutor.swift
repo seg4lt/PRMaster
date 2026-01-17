@@ -31,6 +31,9 @@ actor ShellExecutor {
         process.standardOutput = pipe
         process.standardError = pipe
 
+        // Set working directory to temp to avoid permission dialogs
+        process.currentDirectoryURL = FileManager.default.temporaryDirectory
+
         // Add common binary paths for GUI apps launched from Finder
         var env = ProcessInfo.processInfo.environment
         let home = env["HOME"] ?? NSHomeDirectory()
