@@ -3,6 +3,7 @@ import SwiftUI
 struct RepoPickerView: View {
     @ObservedObject var viewModel: AISummaryViewModel
     @State private var isExpanded = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         // Header button to expand/collapse
@@ -115,7 +116,7 @@ struct RepoPickerView: View {
         }
         .padding(8)
         .frame(width: 280)
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(colorScheme == .dark ? Color(white: 0.2) : Color.white)
         .overlay(
             RoundedRectangle(cornerRadius: 6)
                 .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
