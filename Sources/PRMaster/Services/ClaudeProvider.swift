@@ -91,12 +91,11 @@ actor ClaudeProvider: AIProvider {
 
         \(commitList)
 
-        Focus on:
-        1) Main themes or areas of work
-        2) Key accomplishments
-        3) Patterns (features, fixes, refactoring)
+        Output as markdown with:
+        - A "## \(weekLabel)" heading
+        - A brief summary (2-4 sentences) focusing on main themes, key accomplishments, and patterns (features, fixes, refactoring)
 
-        Keep it concise (2-4 sentences). Do not include the commit SHAs in your response.
+        Do not include commit SHAs. Keep it concise.
         """
 
         let start = Date()

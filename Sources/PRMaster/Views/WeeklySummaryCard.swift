@@ -1,8 +1,10 @@
 import SwiftUI
+import AppKit
 
 struct WeeklySummaryCard: View {
     let summary: WeeklySummary
     let onRetry: () -> Void
+    @State private var copied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -19,6 +21,18 @@ struct WeeklySummaryCard: View {
                     .clipShape(Capsule())
 
                 Spacer()
+
+                // Copy button for completed summaries
+                if case .completed(let text) = summary.status {
+                    Button {
+                        copyToClipboard(text)
+                    } label: {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .foregroundColor(copied ? .green : .secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Copy summary")
+                }
             }
 
             Divider()
@@ -85,6 +99,17 @@ struct WeeklySummaryCard: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
+        }
+    }
+
+    private func copyToClipboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        copied = true
+
+        // Reset after 2 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            copied = false
         }
     }
 }
