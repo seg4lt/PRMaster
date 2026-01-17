@@ -264,6 +264,12 @@ class AISummaryViewModel: ObservableObject {
             for index in 0..<summaryCount {
                 if Task.isCancelled { break }
 
+                // Skip already-completed summaries (preserved from merge)
+                let currentStatus = await MainActor.run { self.weeklySummaries[index].status }
+                if case .completed = currentStatus {
+                    continue
+                }
+
                 let weekData = await MainActor.run { self.weeklySummaries[index].week }
                 let weekLabel = weekData.weekLabel
 
