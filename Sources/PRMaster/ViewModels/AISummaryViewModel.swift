@@ -3,12 +3,17 @@ import SwiftUI
 
 @MainActor
 class AISummaryViewModel: ObservableObject {
+    static let shared = AISummaryViewModel()
+
     @Published var startDate: Date
     @Published var endDate: Date
     @Published var repoFilter: String = ""
     @Published var weeklySummaries: [WeeklySummary] = []
     @Published var isLoading = false
     @Published var error: String?
+
+    // Cache key based on date range and repo filter
+    private var lastCacheKey: String = ""
 
     private var generationTask: Task<Void, Never>?
 
@@ -18,6 +23,14 @@ class AISummaryViewModel: ObservableObject {
         let today = Date()
         self.endDate = today
         self.startDate = calendar.date(byAdding: .month, value: -1, to: today) ?? today
+
+        // Load cached summaries
+        loadCachedSummaries()
+    }
+
+    private var cacheKey: String {
+        let formatter = ISO8601DateFormatter()
+        return "\(formatter.string(from: startDate))_\(formatter.string(from: endDate))_\(repoFilter)"
     }
 
     var hasMorePending: Bool {
@@ -28,25 +41,32 @@ class AISummaryViewModel: ObservableObject {
         }
     }
 
-    func generateSummaries() async {
+    func generateSummaries() {
         // Cancel any existing generation
         generationTask?.cancel()
 
         isLoading = true
         error = nil
         weeklySummaries = []
+        lastCacheKey = cacheKey
 
-        generationTask = Task {
+        generationTask = Task.detached { [weak self] in
+            guard let self = self else { return }
+
             do {
                 // Get current user
                 guard let currentUser = try? await GitHubService.shared.getCurrentUser() else {
-                    self.error = "Could not get current user"
-                    self.isLoading = false
+                    await MainActor.run {
+                        self.error = "Could not get current user"
+                        self.isLoading = false
+                    }
                     return
                 }
 
                 // Parse repo filter
-                let repos = parseRepoFilter()
+                let repos = await MainActor.run { self.parseRepoFilter() }
+                let startDate = await MainActor.run { self.startDate }
+                let endDate = await MainActor.run { self.endDate }
 
                 // Fetch commits
                 let commits = try await GitHubService.shared.fetchUserCommits(
@@ -59,82 +79,107 @@ class AISummaryViewModel: ObservableObject {
                 if Task.isCancelled { return }
 
                 guard !commits.isEmpty else {
-                    self.error = "No commits found in the selected date range"
-                    self.isLoading = false
+                    await MainActor.run {
+                        self.error = "No commits found in the selected date range"
+                        self.isLoading = false
+                    }
                     return
                 }
 
                 // Group commits by week
-                let weeklyCommits = groupCommitsByWeek(commits)
+                let weeklyCommits = await MainActor.run { self.groupCommitsByWeek(commits) }
 
                 // Initialize summaries with pending status
-                self.weeklySummaries = weeklyCommits.map { week in
-                    WeeklySummary(week: week, status: .pending)
+                await MainActor.run {
+                    self.weeklySummaries = weeklyCommits.map { week in
+                        WeeklySummary(week: week, status: .pending)
+                    }
                 }
 
                 // Get the AI provider
                 let provider = AIProviderType.claude.createProvider()
 
-                // Launch all summary tasks concurrently
+                // Launch all summary tasks concurrently (detached for parallelism)
+                let summaryCount = await MainActor.run { self.weeklySummaries.count }
                 var tasks: [Int: Task<String, Error>] = [:]
-                for (index, summary) in weeklySummaries.enumerated() {
-                    let commits = summary.week.commits
-                    let weekLabel = summary.week.weekLabel
-                    tasks[index] = Task {
+
+                for index in 0..<summaryCount {
+                    let weekData = await MainActor.run { self.weeklySummaries[index].week }
+                    let commits = weekData.commits
+                    let weekLabel = weekData.weekLabel
+                    tasks[index] = Task.detached {
                         try await provider.summarizeWeek(commits: commits, weekLabel: weekLabel)
                     }
                 }
 
                 // Process results in order for streaming display
-                for index in 0..<weeklySummaries.count {
+                for index in 0..<summaryCount {
                     if Task.isCancelled { break }
 
                     // Mark current as loading
-                    weeklySummaries[index].status = .loading
+                    await MainActor.run {
+                        self.weeklySummaries[index].status = .loading
+                    }
 
                     // Await the pre-launched task
                     if let task = tasks[index] {
                         do {
                             let result = try await task.value
                             if !Task.isCancelled {
-                                weeklySummaries[index].status = .completed(result)
+                                await MainActor.run {
+                                    self.weeklySummaries[index].status = .completed(result)
+                                }
                             }
                         } catch {
                             if !Task.isCancelled {
-                                weeklySummaries[index].status = .error(error.localizedDescription)
+                                await MainActor.run {
+                                    self.weeklySummaries[index].status = .error(error.localizedDescription)
+                                }
                             }
                         }
                     }
                 }
 
-                self.isLoading = false
+                await MainActor.run {
+                    self.isLoading = false
+                    self.saveCachedSummaries()
+                }
             } catch {
                 if !Task.isCancelled {
-                    self.error = error.localizedDescription
-                    self.isLoading = false
+                    await MainActor.run {
+                        self.error = error.localizedDescription
+                        self.isLoading = false
+                    }
                 }
             }
         }
-
-        await generationTask?.value
     }
 
-    func retrySummary(at index: Int) async {
+    func retrySummary(at index: Int) {
         guard index < weeklySummaries.count else { return }
 
         let summary = weeklySummaries[index]
         weeklySummaries[index].status = .loading
 
-        let provider = AIProviderType.claude.createProvider()
+        Task.detached { [weak self] in
+            guard let self = self else { return }
 
-        do {
-            let result = try await provider.summarizeWeek(
-                commits: summary.week.commits,
-                weekLabel: summary.week.weekLabel
-            )
-            weeklySummaries[index].status = .completed(result)
-        } catch {
-            weeklySummaries[index].status = .error(error.localizedDescription)
+            let provider = AIProviderType.claude.createProvider()
+
+            do {
+                let result = try await provider.summarizeWeek(
+                    commits: summary.week.commits,
+                    weekLabel: summary.week.weekLabel
+                )
+                await MainActor.run {
+                    self.weeklySummaries[index].status = .completed(result)
+                    self.saveCachedSummaries()
+                }
+            } catch {
+                await MainActor.run {
+                    self.weeklySummaries[index].status = .error(error.localizedDescription)
+                }
+            }
         }
     }
 
@@ -151,6 +196,12 @@ class AISummaryViewModel: ObservableObject {
                 break
             }
         }
+    }
+
+    func clearCache() {
+        weeklySummaries = []
+        UserDefaults.standard.removeObject(forKey: "aiSummaryCache")
+        UserDefaults.standard.removeObject(forKey: "aiSummaryCacheKey")
     }
 
     // MARK: - Private Helpers
@@ -185,4 +236,52 @@ class AISummaryViewModel: ObservableObject {
             )
         }
     }
+
+    // MARK: - Caching
+
+    private func saveCachedSummaries() {
+        // Only cache completed summaries
+        let cacheData = weeklySummaries.compactMap { summary -> CachedSummary? in
+            guard case .completed(let text) = summary.status else { return nil }
+            return CachedSummary(
+                weekStart: summary.week.weekStart,
+                weekEnd: summary.week.weekEnd,
+                weekLabel: summary.week.weekLabel,
+                commitCount: summary.week.commits.count,
+                summaryText: text
+            )
+        }
+
+        if let data = try? JSONEncoder().encode(cacheData) {
+            UserDefaults.standard.set(data, forKey: "aiSummaryCache")
+            UserDefaults.standard.set(lastCacheKey, forKey: "aiSummaryCacheKey")
+        }
+    }
+
+    private func loadCachedSummaries() {
+        guard let data = UserDefaults.standard.data(forKey: "aiSummaryCache"),
+              let cached = try? JSONDecoder().decode([CachedSummary].self, from: data) else {
+            return
+        }
+
+        // Restore cached summaries (without commit details, just the summary text)
+        weeklySummaries = cached.map { cache in
+            let week = WeeklyCommits(
+                weekStart: cache.weekStart,
+                weekEnd: cache.weekEnd,
+                commits: [] // We don't cache commits, just the summary
+            )
+            return WeeklySummary(week: week, status: .completed(cache.summaryText))
+        }
+    }
+}
+
+// MARK: - Cache Models
+
+private struct CachedSummary: Codable {
+    let weekStart: Date
+    let weekEnd: Date
+    let weekLabel: String
+    let commitCount: Int
+    let summaryText: String
 }

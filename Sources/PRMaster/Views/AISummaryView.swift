@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AISummaryView: View {
-    @StateObject private var viewModel = AISummaryViewModel()
+    @ObservedObject private var viewModel = AISummaryViewModel.shared
     @State private var providerStatus: AIProviderStatus = .notInstalled(message: "Checking...")
 
     private let dateFormatter: DateFormatter = {
@@ -63,9 +63,7 @@ struct AISummaryView: View {
                 Spacer()
 
                 Button {
-                    Task {
-                        await viewModel.generateSummaries()
-                    }
+                    viewModel.generateSummaries()
                 } label: {
                     HStack(spacing: 4) {
                         if viewModel.isLoading {
@@ -86,6 +84,14 @@ struct AISummaryView: View {
                         viewModel.cancelGeneration()
                     }
                     .buttonStyle(.bordered)
+                } else if !viewModel.weeklySummaries.isEmpty {
+                    Button {
+                        viewModel.clearCache()
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Clear cached summaries")
                 }
             }
         }
@@ -128,9 +134,7 @@ struct AISummaryView: View {
                             WeeklySummaryCard(
                                 summary: summary,
                                 onRetry: {
-                                    Task {
-                                        await viewModel.retrySummary(at: index)
-                                    }
+                                    viewModel.retrySummary(at: index)
                                 }
                             )
                         }
