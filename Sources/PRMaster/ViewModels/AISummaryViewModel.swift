@@ -24,9 +24,6 @@ class AISummaryViewModel: ObservableObject {
     private var hasCheckedProvider = false
     private var hasLoadedRepos = false
 
-    // Cache key based on date range and repo filter
-    private var lastCacheKey: String = ""
-
     var filteredRepos: [String] {
         if repoSearchText.isEmpty {
             return availableRepos
@@ -45,12 +42,6 @@ class AISummaryViewModel: ObservableObject {
 
         // Load cached summaries
         loadCachedSummaries()
-    }
-
-    private var cacheKey: String {
-        let formatter = ISO8601DateFormatter()
-        let repos = selectedRepos.sorted().joined(separator: ",")
-        return "\(formatter.string(from: startDate))_\(formatter.string(from: endDate))_\(repos)"
     }
 
     var hasMorePending: Bool {
@@ -179,7 +170,6 @@ class AISummaryViewModel: ObservableObject {
         error = nil
         statusMessage = "Fetching GitHub user..."
         weeklySummaries = []
-        lastCacheKey = cacheKey
 
         generationTask = Task.detached { [weak self] in
             guard let self = self else { return }
@@ -348,7 +338,6 @@ class AISummaryViewModel: ObservableObject {
     func clearCache() {
         weeklySummaries = []
         UserDefaults.standard.removeObject(forKey: "aiSummaryCache")
-        UserDefaults.standard.removeObject(forKey: "aiSummaryCacheKey")
     }
 
     // MARK: - Private Helpers
@@ -381,10 +370,21 @@ class AISummaryViewModel: ObservableObject {
     // MARK: - Caching
 
     private func saveCachedSummaries() {
-        // Only cache completed summaries
-        let cacheData = weeklySummaries.compactMap { summary -> CachedSummary? in
-            guard case .completed(let text) = summary.status else { return nil }
-            return CachedSummary(
+        // Load existing cache
+        var existingCache: [String: CachedSummary] = [:]
+        if let data = UserDefaults.standard.data(forKey: "aiSummaryCache"),
+           let cached = try? JSONDecoder().decode([CachedSummary].self, from: data) {
+            for summary in cached {
+                let key = ISO8601DateFormatter().string(from: summary.weekStart)
+                existingCache[key] = summary
+            }
+        }
+
+        // Merge new completed summaries (override existing, add new)
+        for summary in weeklySummaries {
+            guard case .completed(let text) = summary.status else { continue }
+            let key = summary.week.id
+            existingCache[key] = CachedSummary(
                 weekStart: summary.week.weekStart,
                 weekEnd: summary.week.weekEnd,
                 weekLabel: summary.week.weekLabel,
@@ -393,9 +393,10 @@ class AISummaryViewModel: ObservableObject {
             )
         }
 
-        if let data = try? JSONEncoder().encode(cacheData) {
+        // Sort by date and save
+        let sortedCache = existingCache.values.sorted { $0.weekStart < $1.weekStart }
+        if let data = try? JSONEncoder().encode(Array(sortedCache)) {
             UserDefaults.standard.set(data, forKey: "aiSummaryCache")
-            UserDefaults.standard.set(lastCacheKey, forKey: "aiSummaryCacheKey")
         }
     }
 

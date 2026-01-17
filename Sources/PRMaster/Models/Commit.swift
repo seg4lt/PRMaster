@@ -29,7 +29,10 @@ struct WeeklyCommits: Identifiable {
     var weekLabel: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d"
-        return "\(formatter.string(from: weekStart)) - \(formatter.string(from: weekEnd))"
+        let yearFormatter = DateFormatter()
+        yearFormatter.dateFormat = "yyyy"
+        let year = yearFormatter.string(from: weekEnd)
+        return "\(formatter.string(from: weekStart)) - \(formatter.string(from: weekEnd)), \(year)"
     }
 }
 
