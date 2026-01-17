@@ -12,8 +12,10 @@ struct SettingsView: View {
     @AppStorage("badgeSource") private var badgeSource: String = "toReview"
     @AppStorage("badgeFilterId") private var badgeFilterId: String = ""
     @AppStorage("badgeConfig") private var badgeConfigJSON: String = "[]"  // JSON array of BadgeSourceConfig
+    @AppStorage("aiProvider") private var selectedProvider: String = AIProviderType.claude.rawValue
     @Query private var savedFilters: [NotificationFilter]
     @State private var ghStatus: GHStatus = .checking
+    @State private var aiProviderStatus: AIProviderStatus = .notInstalled(message: "Checking...")
 
     private var badgeConfigs: [BadgeSourceConfig] {
         (try? JSONDecoder().decode([BadgeSourceConfig].self, from: Data(badgeConfigJSON.utf8))) ?? []
@@ -88,6 +90,10 @@ struct SettingsView: View {
 
                 Divider()
 
+                aiProviderSection
+
+                Divider()
+
                 Button("Quit PRMaster") {
                     NSApplication.shared.terminate(nil)
                 }
@@ -97,7 +103,77 @@ struct SettingsView: View {
         }
         .task {
             await checkGHStatus()
+            await checkAIProviderStatus()
         }
+        .onChange(of: selectedProvider) { _, _ in
+            Task {
+                await checkAIProviderStatus()
+            }
+        }
+    }
+
+    private var aiProviderSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("AI Provider")
+                .font(.subheadline)
+                .fontWeight(.medium)
+
+            Picker("Provider", selection: $selectedProvider) {
+                ForEach(AIProviderType.allCases, id: \.rawValue) { provider in
+                    Text(provider.displayName).tag(provider.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 200)
+
+            HStack(spacing: 6) {
+                switch aiProviderStatus {
+                case .available:
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                    Text("\(currentProviderName) ready")
+                case .notInstalled(let msg):
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.red)
+                    Text(msg)
+                    Button("Install Claude Code") {
+                        if let url = URL(string: "https://claude.ai/code") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                case .notAuthenticated(let msg):
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text(msg)
+                    Button("Run claude login") {
+                        openTerminalWithCommand("claude login")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                case .error(let msg):
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.red)
+                    Text(msg)
+                }
+            }
+            .font(.caption)
+
+            Text("Used for AI Weekly Summary feature")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var currentProviderName: String {
+        AIProviderType(rawValue: selectedProvider)?.displayName ?? "Unknown"
+    }
+
+    private func checkAIProviderStatus() async {
+        guard let providerType = AIProviderType(rawValue: selectedProvider) else { return }
+        let provider = providerType.createProvider()
+        aiProviderStatus = await provider.checkAvailability()
     }
 
     private var ghStatusSection: some View {
