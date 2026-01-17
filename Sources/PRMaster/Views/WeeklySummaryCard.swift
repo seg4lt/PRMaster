@@ -28,7 +28,6 @@ struct SummaryCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Header
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
@@ -54,10 +53,8 @@ struct SummaryCard: View {
 
                 Spacer()
 
-                // Action buttons for completed summaries
                 if case .completed(let text) = summary.status {
                     HStack(spacing: 8) {
-                        // Delete button
                         Button {
                             onDelete()
                         } label: {
@@ -67,7 +64,6 @@ struct SummaryCard: View {
                         .buttonStyle(.borderless)
                         .help("Delete summary")
 
-                        // Copy button
                         Button {
                             copyToClipboard(text)
                         } label: {
@@ -77,9 +73,7 @@ struct SummaryCard: View {
                         .buttonStyle(.borderless)
                         .help("Copy summary")
 
-                        // Update button with popover
                         Button {
-                            // Reset to current summary's values
                             newStartDate = summary.dateRange.startDate
                             newEndDate = summary.dateRange.endDate
                             selectedRepos = Set(summary.repositories)
@@ -100,7 +94,6 @@ struct SummaryCard: View {
 
             Divider()
 
-            // Content based on status
             statusContent
         }
         .padding(12)
@@ -117,7 +110,6 @@ struct SummaryCard: View {
             Text("Update Summary")
                 .font(.headline)
 
-            // Date pickers
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Start")
@@ -138,13 +130,11 @@ struct SummaryCard: View {
                 }
             }
 
-            // Repository picker (shared component)
             RepoListPicker(
                 availableRepos: availableRepos,
                 selectedRepos: $selectedRepos,
                 searchText: $repoSearchText,
-                showSelectAll: false,
-                height: 120
+                height: 150
             )
 
             HStack {
@@ -224,8 +214,6 @@ struct SummaryCard: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         copied = true
-
-        // Reset after 2 seconds
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             copied = false
         }

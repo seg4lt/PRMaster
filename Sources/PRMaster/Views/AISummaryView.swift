@@ -14,14 +14,13 @@ struct AISummaryView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerSection
-                .zIndex(1) // Keep dropdown above dismiss layer
+                .zIndex(1)
             Divider()
             contentSection
         }
         .background {
-            // Full-screen tap to dismiss dropdown
             if isRepoPickerExpanded {
-                Color.black.opacity(0.001) // Nearly invisible but captures taps
+                Color.black.opacity(0.001)
                     .ignoresSafeArea()
                     .onTapGesture {
                         withAnimation(.easeInOut(duration: 0.2)) {
@@ -155,7 +154,6 @@ struct AISummaryView: View {
 
     private var contentSection: some View {
         VStack(spacing: 0) {
-            // Always show error banner if present
             if let error = viewModel.error {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -173,7 +171,6 @@ struct AISummaryView: View {
                 .background(Color.red.opacity(0.1))
             }
 
-            // Show status message during loading
             if let statusMessage = viewModel.statusMessage {
                 HStack {
                     ProgressView()
@@ -188,7 +185,6 @@ struct AISummaryView: View {
                 .background(Color.blue.opacity(0.05))
             }
 
-            // Main content
             if viewModel.summaries.isEmpty && !viewModel.isLoading {
                 emptyState
             } else {

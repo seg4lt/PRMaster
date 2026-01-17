@@ -54,29 +54,11 @@ struct RepoPickerView: View {
 
     private var dropdownContent: some View {
         VStack(spacing: 8) {
-            HStack {
-                Text("Repositories")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                Spacer()
-                Button {
-                    Task {
-                        await viewModel.reloadRepos()
-                    }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.caption)
-                }
-                .buttonStyle(.borderless)
-                .help("Refresh repo list")
-                .disabled(viewModel.isLoadingRepos)
-            }
-
             RepoListPicker(
                 availableRepos: viewModel.availableRepos,
                 selectedRepos: $viewModel.selectedRepos,
                 searchText: $viewModel.repoSearchText,
-                height: 200
+                height: 180
             )
             .onChange(of: viewModel.selectedRepos) { _ in
                 viewModel.saveSelectedReposPublic()

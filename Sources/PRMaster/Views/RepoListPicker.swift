@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Reusable repository list picker component
 struct RepoListPicker: View {
     let availableRepos: [String]
     @Binding var selectedRepos: Set<String>
@@ -24,7 +23,6 @@ struct RepoListPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Header with count and actions
             HStack {
                 Text("\(selectedRepos.count) selected")
                     .font(.caption)
@@ -49,7 +47,6 @@ struct RepoListPicker: View {
                 }
             }
 
-            // Search field
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
@@ -62,7 +59,6 @@ struct RepoListPicker: View {
             .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 4))
 
-            // Repo list
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(filteredRepos, id: \.self) { repo in
