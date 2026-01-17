@@ -40,7 +40,7 @@ enum Tab: String, CaseIterable {
     }
 
     static var fullWindowTabs: [Tab] {
-        [.toReview, .reviewed, .myPRs, .filters, .settings, .apiStats, .ai]
+        [.toReview, .reviewed, .myPRs, .filters, .ai, .apiStats, .settings]
     }
 }
 
