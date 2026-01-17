@@ -11,6 +11,7 @@ class AISummaryViewModel: ObservableObject {
     @Published var weeklySummaries: [WeeklySummary] = []
     @Published var isLoading = false
     @Published var error: String?
+    @Published var statusMessage: String?
 
     // Cache key based on date range and repo filter
     private var lastCacheKey: String = ""
@@ -47,6 +48,7 @@ class AISummaryViewModel: ObservableObject {
 
         isLoading = true
         error = nil
+        statusMessage = "Fetching GitHub user..."
         weeklySummaries = []
         lastCacheKey = cacheKey
 
@@ -55,10 +57,15 @@ class AISummaryViewModel: ObservableObject {
 
             do {
                 // Get current user
+                await MainActor.run {
+                    self.statusMessage = "Fetching GitHub user..."
+                }
+
                 guard let currentUser = try? await GitHubService.shared.getCurrentUser() else {
                     await MainActor.run {
                         self.error = "Could not get current user"
                         self.isLoading = false
+                        self.statusMessage = nil
                     }
                     return
                 }
@@ -67,6 +74,10 @@ class AISummaryViewModel: ObservableObject {
                 let repos = await MainActor.run { self.parseRepoFilter() }
                 let startDate = await MainActor.run { self.startDate }
                 let endDate = await MainActor.run { self.endDate }
+
+                await MainActor.run {
+                    self.statusMessage = "Fetching commits..."
+                }
 
                 // Fetch commits
                 let commits = try await GitHubService.shared.fetchUserCommits(
@@ -82,8 +93,13 @@ class AISummaryViewModel: ObservableObject {
                     await MainActor.run {
                         self.error = "No commits found in the selected date range"
                         self.isLoading = false
+                        self.statusMessage = nil
                     }
                     return
+                }
+
+                await MainActor.run {
+                    self.statusMessage = "Found \(commits.count) commits, grouping by week..."
                 }
 
                 // Group commits by week
@@ -94,6 +110,7 @@ class AISummaryViewModel: ObservableObject {
                     self.weeklySummaries = weeklyCommits.map { week in
                         WeeklySummary(week: week, status: .pending)
                     }
+                    self.statusMessage = "Generating summaries..."
                 }
 
                 // Get the AI provider
@@ -142,6 +159,7 @@ class AISummaryViewModel: ObservableObject {
 
                 await MainActor.run {
                     self.isLoading = false
+                    self.statusMessage = nil
                     self.saveCachedSummaries()
                 }
             } catch {
@@ -149,6 +167,7 @@ class AISummaryViewModel: ObservableObject {
                     await MainActor.run {
                         self.error = error.localizedDescription
                         self.isLoading = false
+                        self.statusMessage = nil
                     }
                 }
             }
@@ -186,6 +205,7 @@ class AISummaryViewModel: ObservableObject {
     func cancelGeneration() {
         generationTask?.cancel()
         isLoading = false
+        statusMessage = nil
 
         // Mark any loading/pending summaries as cancelled
         for index in 0..<weeklySummaries.count {

@@ -3,6 +3,7 @@ import Foundation
 enum ShellError: Error, LocalizedError {
     case commandFailed(String, Int32)
     case commandNotFound(String)
+    case timeout(TimeInterval)
 
     var errorDescription: String? {
         switch self {
@@ -10,6 +11,8 @@ enum ShellError: Error, LocalizedError {
             return "Command failed with exit code \(code): \(output)"
         case .commandNotFound(let command):
             return "Command not found: \(command)"
+        case .timeout(let seconds):
+            return "Command timed out after \(Int(seconds)) seconds"
         }
     }
 }
@@ -19,7 +22,7 @@ actor ShellExecutor {
 
     private init() {}
 
-    func execute(_ command: String, arguments: [String] = []) async throws -> String {
+    func execute(_ command: String, arguments: [String] = [], timeout: TimeInterval = 30) async throws -> String {
         let process = Process()
         let pipe = Pipe()
 
@@ -50,9 +53,18 @@ actor ShellExecutor {
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             throw ShellError.commandNotFound(command)
+        }
+
+        // Wait for process with timeout
+        let startTime = Date()
+        while process.isRunning {
+            if Date().timeIntervalSince(startTime) > timeout {
+                process.terminate()
+                throw ShellError.timeout(timeout)
+            }
+            try await Task.sleep(nanoseconds: 100_000_000) // 0.1 second
         }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()

@@ -83,6 +83,8 @@ enum AppError: Error, Identifiable, Equatable {
                 return .networkError(output.prefix(100).description)
             }
             return .networkError(output.prefix(100).description)
+        case .timeout(let seconds):
+            return .networkError("Request timed out after \(Int(seconds)) seconds")
         }
     }
 }

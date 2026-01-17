@@ -47,6 +47,9 @@ actor GitHubService {
                         if output.contains("401") || output.contains("403") && !output.contains("rate limit") {
                             throw error
                         }
+                    case .timeout:
+                        // Timeouts can be retried
+                        break
                     }
                 }
                 if attempt < maxAttempts {

@@ -2,7 +2,8 @@ import SwiftUI
 
 struct AISummaryView: View {
     @ObservedObject private var viewModel = AISummaryViewModel.shared
-    @State private var providerStatus: AIProviderStatus = .notInstalled(message: "Checking...")
+    @State private var providerStatus: AIProviderStatus = .notInstalled(message: "Checking Claude...")
+    @State private var isCheckingProvider = true
 
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -77,7 +78,7 @@ struct AISummaryView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(viewModel.isLoading || !providerStatus.isAvailable)
+                .disabled(viewModel.isLoading || isCheckingProvider)
 
                 if viewModel.isLoading {
                     Button("Cancel") {
@@ -101,30 +102,71 @@ struct AISummaryView: View {
     @ViewBuilder
     private var providerStatusBadge: some View {
         HStack(spacing: 4) {
-            switch providerStatus {
-            case .available:
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-                Text("Claude Ready")
-            case .notInstalled(let msg):
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundColor(.red)
-                Text(msg)
-            case .notAuthenticated(let msg):
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                Text(msg)
-            case .error(let msg):
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.red)
-                Text(msg)
+            if isCheckingProvider {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .frame(width: 12, height: 12)
+                Text("Checking Claude...")
+            } else {
+                switch providerStatus {
+                case .available:
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                    Text("Claude Ready")
+                case .notInstalled(let msg):
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.red)
+                    Text(msg)
+                case .notAuthenticated(let msg):
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text(msg)
+                case .error(let msg):
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.red)
+                    Text(msg)
+                }
             }
         }
         .font(.caption)
     }
 
     private var contentSection: some View {
-        Group {
+        VStack(spacing: 0) {
+            // Always show error banner if present
+            if let error = viewModel.error {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.red)
+                    Text(error)
+                        .lineLimit(2)
+                    Spacer()
+                    Button("Dismiss") {
+                        viewModel.error = nil
+                    }
+                    .buttonStyle(.borderless)
+                }
+                .font(.caption)
+                .padding(8)
+                .background(Color.red.opacity(0.1))
+            }
+
+            // Show status message during loading
+            if let statusMessage = viewModel.statusMessage {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                        .frame(width: 14, height: 14)
+                    Text(statusMessage)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .font(.caption)
+                .padding(8)
+                .background(Color.blue.opacity(0.05))
+            }
+
+            // Main content
             if viewModel.weeklySummaries.isEmpty && !viewModel.isLoading {
                 emptyState
             } else {
@@ -162,19 +204,14 @@ struct AISummaryView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-
-            if let error = viewModel.error {
-                Text(error)
-                    .font(.caption)
-                    .foregroundColor(.red)
-                    .padding(.top, 8)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func checkProviderStatus() async {
+        isCheckingProvider = true
         let provider = AIProviderType.claude.createProvider()
         providerStatus = await provider.checkAvailability()
+        isCheckingProvider = false
     }
 }

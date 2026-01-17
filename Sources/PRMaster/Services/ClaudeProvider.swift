@@ -12,7 +12,8 @@ actor ClaudeProvider: AIProvider {
         let start = Date()
 
         do {
-            let output = try await shell.execute("claude", arguments: ["--version"])
+            // Use a shorter timeout for version check (10 seconds)
+            let output = try await shell.execute("claude", arguments: ["--version"], timeout: 10)
             let duration = Date().timeIntervalSince(start)
 
             await GitHubService.shared.addExternalLog(
@@ -50,6 +51,15 @@ actor ClaudeProvider: AIProvider {
                 // Surface the actual error
                 let truncatedOutput = output.prefix(200)
                 return .error("Exit \(code): \(truncatedOutput)")
+
+            case .timeout(let seconds):
+                await GitHubService.shared.addExternalLog(
+                    command: "claude --version",
+                    duration: duration,
+                    success: false,
+                    prompt: "Timeout after \(Int(seconds))s"
+                )
+                return .error("Claude command timed out after \(Int(seconds))s")
             }
         } catch {
             let duration = Date().timeIntervalSince(start)
@@ -93,11 +103,12 @@ actor ClaudeProvider: AIProvider {
         let displayPrompt = "Summarize \(weekLabel) (\(commits.count) commits)"
 
         do {
+            // Use a longer timeout for AI summarization (120 seconds)
             let output = try await shell.execute("claude", arguments: [
                 "-p", prompt,
                 "--output-format", "json",
                 "--max-turns", "1"
-            ])
+            ], timeout: 120)
 
             let duration = Date().timeIntervalSince(start)
             await GitHubService.shared.addExternalLog(
@@ -128,6 +139,8 @@ actor ClaudeProvider: AIProvider {
                 throw AIProviderError.executionFailed(output)
             case .commandNotFound:
                 throw AIProviderError.notInstalled
+            case .timeout(let seconds):
+                throw AIProviderError.executionFailed("Request timed out after \(Int(seconds)) seconds")
             }
         } catch let error as AIProviderError {
             throw error
