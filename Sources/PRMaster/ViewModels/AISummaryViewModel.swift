@@ -194,7 +194,16 @@ class AISummaryViewModel: ObservableObject {
         isLoading = true
         error = nil
         statusMessage = "Fetching GitHub user..."
-        weeklySummaries = []
+
+        // Preserve existing completed summaries keyed by week ID
+        let existingSummaries = Dictionary(uniqueKeysWithValues:
+            weeklySummaries.compactMap { summary -> (String, WeeklySummary)? in
+                if case .completed = summary.status {
+                    return (summary.week.id, summary)
+                }
+                return nil
+            }
+        )
 
         generationTask = Task.detached { [weak self] in
             guard let self = self else { return }
@@ -223,7 +232,7 @@ class AISummaryViewModel: ObservableObject {
 
             // Initialize all weeks as pending (with empty commits for now)
             await MainActor.run {
-                self.weeklySummaries = weekRanges.map { range in
+                var newSummaries = weekRanges.map { range in
                     let week = WeeklyCommits(
                         weekStart: range.start,
                         weekEnd: range.end,
@@ -231,6 +240,16 @@ class AISummaryViewModel: ObservableObject {
                     )
                     return WeeklySummary(week: week, status: .pending)
                 }
+
+                // Merge existing summaries for weeks not being regenerated
+                let newWeekIds = Set(newSummaries.map { $0.week.id })
+                for (weekId, existingSummary) in existingSummaries where !newWeekIds.contains(weekId) {
+                    newSummaries.append(existingSummary)
+                }
+
+                // Sort by week start date
+                newSummaries.sort { $0.week.weekStart < $1.week.weekStart }
+                self.weeklySummaries = newSummaries
             }
 
             if Task.isCancelled { return }
