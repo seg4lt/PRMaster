@@ -277,7 +277,6 @@ actor CopilotProvider: AIProvider {
             if let model = model, !model.isEmpty {
                 arguments.append(contentsOf: ["--model", model])
             }
-            arguments.append("--no-open-editor")
 
             let output = try await shell.execute("copilot", arguments: arguments, timeout: summarizationTimeout)
 
