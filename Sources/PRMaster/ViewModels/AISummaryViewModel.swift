@@ -25,10 +25,18 @@ class AISummaryViewModel: ObservableObject {
     private var hasLoadedRepos = false
 
     var filteredRepos: [String] {
-        if repoSearchText.isEmpty {
-            return availableRepos
+        let repos = repoSearchText.isEmpty
+            ? availableRepos
+            : availableRepos.filter { $0.localizedCaseInsensitiveContains(repoSearchText) }
+        // Selected repos first, then alphabetically within each group
+        return repos.sorted { a, b in
+            let aSelected = selectedRepos.contains(a)
+            let bSelected = selectedRepos.contains(b)
+            if aSelected != bSelected {
+                return aSelected
+            }
+            return a < b
         }
-        return availableRepos.filter { $0.localizedCaseInsensitiveContains(repoSearchText) }
     }
 
     private var generationTask: Task<Void, Never>?
