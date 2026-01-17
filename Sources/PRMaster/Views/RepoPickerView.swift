@@ -5,7 +5,7 @@ struct RepoPickerView: View {
     @State private var isExpanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        ZStack(alignment: .topLeading) {
             // Header button to expand/collapse
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -46,7 +46,7 @@ struct RepoPickerView: View {
             }
             .buttonStyle(.plain)
 
-            // Expanded picker
+            // Floating dropdown
             if isExpanded {
                 VStack(spacing: 8) {
                     // Search field
@@ -57,7 +57,7 @@ struct RepoPickerView: View {
                             .textFieldStyle(.plain)
                     }
                     .padding(8)
-                    .background(Color(nsColor: .controlBackgroundColor))
+                    .background(Color(nsColor: .textBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
 
                     // Quick actions
@@ -108,12 +108,15 @@ struct RepoPickerView: View {
                     .frame(maxHeight: 200)
                 }
                 .padding(8)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(Color(nsColor: .windowBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
                 )
+                .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
+                .offset(y: 36) // Position below the button
+                .zIndex(100)
             }
         }
     }
