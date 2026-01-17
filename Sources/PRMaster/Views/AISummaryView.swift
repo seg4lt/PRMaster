@@ -208,10 +208,6 @@ struct AISummaryView: View {
                                 }
                             )
                         }
-
-                        if viewModel.hasMorePending {
-                            AISummarySkeleton()
-                        }
                     }
                     .padding(12)
                 }
