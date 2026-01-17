@@ -416,7 +416,7 @@ actor GitHubService {
         let untilStr = dateFormatter.string(from: endDate)
 
         let displayFormatter = DateFormatter()
-        displayFormatter.dateFormat = "MMM d"
+        displayFormatter.dateFormat = "MMM d, yyyy HH:mm"
         let displayRange = "\(displayFormatter.string(from: startDate)) - \(displayFormatter.string(from: endDate))"
 
         var allCommits: [Commit] = []
