@@ -341,7 +341,9 @@ actor CopilotProvider: AIProvider {
             )
 
             // Copilot returns plain text, not JSON
-            return output.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Filter out usage statistics that Copilot CLI appends to output
+            let filtered = filterUsageStatistics(output)
+            return filtered.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch let error as ShellError {
             let duration = Date().timeIntervalSince(start)
             await GitHubService.shared.addExternalLog(
@@ -371,6 +373,27 @@ actor CopilotProvider: AIProvider {
             )
             throw AIProviderError.executionFailed(error.localizedDescription)
         }
+    }
+
+    /// Filter out Copilot CLI usage statistics from output
+    private func filterUsageStatistics(_ text: String) -> String {
+        let lines = text.components(separatedBy: "\n")
+
+        for i in 0..<lines.count {
+            let trimmed = lines[i].trimmingCharacters(in: .whitespaces)
+
+            if trimmed.hasPrefix("Total usage") {
+                // Look ahead: confirm next line is also usage stats
+                if i + 1 < lines.count {
+                    let nextTrimmed = lines[i + 1].trimmingCharacters(in: .whitespaces)
+                    if nextTrimmed.hasPrefix("Total duration") {
+                        return lines[0..<i].joined(separator: "\n")
+                    }
+                }
+            }
+        }
+
+        return text
     }
 
     // MARK: - Model Discovery
