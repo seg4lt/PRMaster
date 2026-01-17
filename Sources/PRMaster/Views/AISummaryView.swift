@@ -13,9 +13,7 @@ struct AISummaryView: View {
         VStack(spacing: 0) {
             headerSection
             Divider()
-                .zIndex(5)
             contentSection
-                .zIndex(1)
         }
         .task {
             await viewModel.checkProviderStatusIfNeeded()
@@ -97,7 +95,6 @@ struct AISummaryView: View {
             }
         }
         .padding(12)
-        .zIndex(10) // Allow dropdown to float over content below
     }
 
     @ViewBuilder
