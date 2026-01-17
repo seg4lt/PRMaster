@@ -206,6 +206,8 @@ class AISummaryViewModel: ObservableObject {
         while currentStart < endDate {
             // End of this week: 6 days from start, or endDate if sooner
             var weekEnd = calendar.date(byAdding: .day, value: 6, to: currentStart) ?? currentStart
+            // Normalize to end of day
+            weekEnd = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: weekEnd) ?? weekEnd
             if weekEnd > endDate {
                 weekEnd = endDate
             }
