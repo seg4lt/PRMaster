@@ -9,6 +9,7 @@ enum Tab: String, CaseIterable {
     case filters = "Filters"
     case settings = "Settings"
     case apiStats = "API"
+    case ai = "AI"
 
     var icon: String {
         switch self {
@@ -18,6 +19,7 @@ enum Tab: String, CaseIterable {
         case .filters: return "bell.badge.fill"
         case .settings: return "gearshape.fill"
         case .apiStats: return "chart.bar.fill"
+        case .ai: return "sparkles"
         }
     }
 
@@ -29,6 +31,7 @@ enum Tab: String, CaseIterable {
         case .filters: return "Filters"
         case .settings: return "Settings"
         case .apiStats: return "API Stats"
+        case .ai: return "AI Summary"
         }
     }
 
@@ -37,7 +40,7 @@ enum Tab: String, CaseIterable {
     }
 
     static var fullWindowTabs: [Tab] {
-        [.toReview, .reviewed, .myPRs, .filters, .settings, .apiStats]
+        [.toReview, .reviewed, .myPRs, .filters, .settings, .apiStats, .ai]
     }
 }
 
@@ -254,6 +257,7 @@ struct MainView: View {
         case .filters: return 0
         case .settings: return 0
         case .apiStats: return 0
+        case .ai: return 0
         }
     }
 
@@ -337,6 +341,8 @@ struct MainView: View {
             SettingsView()
         case .apiStats:
             APIStatsView()
+        case .ai:
+            AISummaryView()
         }
     }
 
