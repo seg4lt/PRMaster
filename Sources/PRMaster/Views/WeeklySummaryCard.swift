@@ -26,20 +26,6 @@ struct SummaryCard: View {
         self._selectedRepos = State(initialValue: Set(summary.repositories))
     }
 
-    private var filteredRepos: [String] {
-        let repos = repoSearchText.isEmpty
-            ? availableRepos
-            : availableRepos.filter { $0.localizedCaseInsensitiveContains(repoSearchText) }
-        return repos.sorted { a, b in
-            let aSelected = selectedRepos.contains(a)
-            let bSelected = selectedRepos.contains(b)
-            if aSelected != bSelected {
-                return aSelected
-            }
-            return a < b
-        }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
@@ -152,51 +138,14 @@ struct SummaryCard: View {
                 }
             }
 
-            // Repository picker
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Repositories")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(selectedRepos.count) selected")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                TextField("Search repos...", text: $repoSearchText)
-                    .textFieldStyle(.roundedBorder)
-                    .controlSize(.small)
-
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(filteredRepos, id: \.self) { repo in
-                            Button {
-                                if selectedRepos.contains(repo) {
-                                    selectedRepos.remove(repo)
-                                } else {
-                                    selectedRepos.insert(repo)
-                                }
-                            } label: {
-                                HStack {
-                                    Image(systemName: selectedRepos.contains(repo) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundColor(selectedRepos.contains(repo) ? .accentColor : .secondary)
-                                    Text(repo)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                    Spacer()
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.vertical, 2)
-                        }
-                    }
-                }
-                .frame(height: 120)
-                .background(Color(nsColor: .textBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-            }
+            // Repository picker (shared component)
+            RepoListPicker(
+                availableRepos: availableRepos,
+                selectedRepos: $selectedRepos,
+                searchText: $repoSearchText,
+                showSelectAll: false,
+                height: 120
+            )
 
             HStack {
                 Button("Cancel") {

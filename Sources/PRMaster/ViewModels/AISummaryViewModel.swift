@@ -193,6 +193,10 @@ class AISummaryViewModel: ObservableObject {
         }
     }
 
+    func saveSelectedReposPublic() {
+        saveSelectedRepos()
+    }
+
     func generateSummaries() {
         // Require at least one repo
         guard !selectedRepos.isEmpty else {

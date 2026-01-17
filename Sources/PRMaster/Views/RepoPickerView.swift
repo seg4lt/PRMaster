@@ -6,7 +6,6 @@ struct RepoPickerView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        // Header button to expand/collapse
         Button {
             withAnimation(.easeInOut(duration: 0.2)) {
                 isExpanded.toggle()
@@ -46,7 +45,6 @@ struct RepoPickerView: View {
         }
         .buttonStyle(.plain)
         .overlay(alignment: .topLeading) {
-            // Floating dropdown using overlay (doesn't affect layout)
             if isExpanded {
                 dropdownContent
                     .offset(y: 36)
@@ -56,37 +54,11 @@ struct RepoPickerView: View {
 
     private var dropdownContent: some View {
         VStack(spacing: 8) {
-            // Search field
             HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Search repos...", text: $viewModel.repoSearchText)
-                    .textFieldStyle(.plain)
-            }
-            .padding(8)
-            .background(Color(nsColor: .textBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-
-            // Quick actions
-            HStack {
-                Button("Select All") {
-                    viewModel.selectAllFilteredRepos()
-                }
-                .buttonStyle(.borderless)
-                .font(.caption)
-
-                Button("Clear") {
-                    viewModel.deselectAllRepos()
-                }
-                .buttonStyle(.borderless)
-                .font(.caption)
-
-                Spacer()
-
-                Text("\(viewModel.filteredRepos.count) repos")
+                Text("Repositories")
                     .font(.caption)
-                    .foregroundColor(.secondary)
-
+                    .fontWeight(.medium)
+                Spacer()
                 Button {
                     Task {
                         await viewModel.reloadRepos()
@@ -100,56 +72,24 @@ struct RepoPickerView: View {
                 .disabled(viewModel.isLoadingRepos)
             }
 
-            // Repo list
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(viewModel.filteredRepos, id: \.self) { repo in
-                        RepoRowView(
-                            repo: repo,
-                            isSelected: viewModel.selectedRepos.contains(repo),
-                            onToggle: { viewModel.toggleRepo(repo) }
-                        )
-                    }
-                }
+            RepoListPicker(
+                availableRepos: viewModel.availableRepos,
+                selectedRepos: $viewModel.selectedRepos,
+                searchText: $viewModel.repoSearchText,
+                height: 200
+            )
+            .onChange(of: viewModel.selectedRepos) { _ in
+                viewModel.saveSelectedReposPublic()
             }
-            .frame(height: 200)
         }
-        .padding(8)
+        .padding(10)
         .frame(width: 280)
         .background(colorScheme == .dark ? Color(white: 0.2) : Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
-    }
-}
-
-struct RepoRowView: View {
-    let repo: String
-    let isSelected: Bool
-    let onToggle: () -> Void
-
-    var body: some View {
-        Button {
-            onToggle()
-        } label: {
-            HStack {
-                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                    .foregroundColor(isSelected ? .accentColor : .secondary)
-
-                Text(repo)
-                    .font(.caption)
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-
-                Spacer()
-            }
-            .padding(.vertical, 4)
-            .padding(.horizontal, 6)
-            .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
-        .buttonStyle(.plain)
     }
 }
