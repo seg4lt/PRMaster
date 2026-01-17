@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AISummaryView: View {
     @ObservedObject private var viewModel = AISummaryViewModel.shared
+    @State private var isRepoPickerExpanded = false
 
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -10,10 +11,24 @@ struct AISummaryView: View {
     }()
 
     var body: some View {
-        VStack(spacing: 0) {
-            headerSection
-            Divider()
-            contentSection
+        ZStack {
+            VStack(spacing: 0) {
+                headerSection
+                Divider()
+                contentSection
+            }
+
+            // Full-screen tap to dismiss dropdown
+            if isRepoPickerExpanded {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isRepoPickerExpanded = false
+                        }
+                    }
+                    .ignoresSafeArea()
+            }
         }
         .task {
             await viewModel.checkProviderStatusIfNeeded()
@@ -55,7 +70,7 @@ struct AISummaryView: View {
                     Text("Repositories")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    RepoPickerView(viewModel: viewModel)
+                    RepoPickerView(viewModel: viewModel, isExpanded: $isRepoPickerExpanded)
                         .frame(width: 250)
                 }
 

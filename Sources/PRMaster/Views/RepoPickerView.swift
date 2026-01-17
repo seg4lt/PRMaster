@@ -2,7 +2,7 @@ import SwiftUI
 
 struct RepoPickerView: View {
     @ObservedObject var viewModel: AISummaryViewModel
-    @State private var isExpanded = false
+    @Binding var isExpanded: Bool
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {

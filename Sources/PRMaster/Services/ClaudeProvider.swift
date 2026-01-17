@@ -93,9 +93,11 @@ actor ClaudeProvider: AIProvider {
 
         Output as markdown with:
         - A "## \(weekLabel)" heading
-        - A brief summary (2-4 sentences) focusing on main themes, key accomplishments, and patterns (features, fixes, refactoring)
+        - Bullet points grouped by repository (use "**repo-name**:" as sub-heading)
+        - Each bullet should describe a key change, feature, or fix
+        - Keep bullets concise (1 line each)
 
-        Do not include commit SHAs. Keep it concise.
+        Do not include commit SHAs.
         """
 
         let start = Date()
