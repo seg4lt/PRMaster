@@ -474,11 +474,12 @@ actor GitHubService {
         let command = "diff \(repo.components(separatedBy: "/").last ?? repo):\(sha.prefix(7))"
 
         do {
-            // Use Accept header to get raw diff format
-            let diff = try await shell.executeGH([
-                "api", "repos/\(repo)/commits/\(sha)",
-                "-H", "Accept: application/vnd.github.diff"
-            ])
+            let diff = try await withRetry {
+                try await shell.executeGH([
+                    "api", "repos/\(repo)/commits/\(sha)",
+                    "-H", "Accept: application/vnd.github.diff"
+                ])
+            }
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
             return diff
         } catch {
