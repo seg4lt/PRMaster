@@ -359,4 +359,53 @@ actor GitHubService {
             return false
         }
     }
+
+    // MARK: - Commit Fetching
+
+    func fetchUserCommits(
+        author: String,
+        startDate: Date,
+        endDate: Date,
+        repos: [String] = []
+    ) async throws -> [Commit] {
+        let start = Date()
+
+        let dateFormatter = ISO8601DateFormatter()
+        dateFormatter.formatOptions = [.withFullDate]
+        let startStr = dateFormatter.string(from: startDate)
+        let endStr = dateFormatter.string(from: endDate)
+
+        // Build search query
+        var query = "author:\(author) author-date:\(startStr)..\(endStr)"
+
+        // Add repo filters if provided
+        if !repos.isEmpty {
+            let repoQueries = repos.map { "repo:\($0)" }.joined(separator: " ")
+            query += " \(repoQueries)"
+        }
+
+        let command = "search commits"
+
+        do {
+            let json = try await withRetry {
+                try await self.shell.executeGH([
+                    "api", "search/commits",
+                    "-X", "GET",
+                    "-H", "Accept: application/vnd.github.cloak-preview+json",
+                    "-f", "q=\(query)",
+                    "-f", "sort=author-date",
+                    "-f", "order=asc",
+                    "-f", "per_page=100"
+                ])
+            }
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            guard !json.isEmpty else { return [] }
+            let response = try decoder.decode(CommitSearchResponse.self, from: Data(json.utf8))
+            return response.items.map { $0.toCommit() }
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
 }
