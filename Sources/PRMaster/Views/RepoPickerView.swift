@@ -115,7 +115,7 @@ struct RepoPickerView: View {
         }
         .padding(8)
         .frame(width: 280)
-        .background(Material.thick)
+        .background(Color(nsColor: .textBackgroundColor))
         .overlay(
             RoundedRectangle(cornerRadius: 6)
                 .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
