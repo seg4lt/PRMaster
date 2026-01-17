@@ -428,6 +428,7 @@ class AISummaryViewModel: ObservableObject {
         guard index < summaries.count else { return }
 
         let summary = summaries[index]
+        let summaryId = summary.id  // Capture ID for safe lookup after async operations
         summaries[index].status = .loading
         statusMessage = "Retrying \(summary.dateRange.dateLabel)..."
 
@@ -463,13 +464,17 @@ class AISummaryViewModel: ObservableObject {
                     model: model
                 )
                 await MainActor.run {
-                    self.summaries[index].status = .completed(result)
+                    if let idx = self.summaries.firstIndex(where: { $0.id == summaryId }) {
+                        self.summaries[idx].status = .completed(result)
+                    }
                     self.statusMessage = nil
                     self.saveCachedSummaries()
                 }
             } catch {
                 await MainActor.run {
-                    self.summaries[index].status = .error(error.localizedDescription)
+                    if let idx = self.summaries.firstIndex(where: { $0.id == summaryId }) {
+                        self.summaries[idx].status = .error(error.localizedDescription)
+                    }
                     self.statusMessage = nil
                 }
             }

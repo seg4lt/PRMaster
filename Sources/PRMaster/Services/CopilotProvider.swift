@@ -10,8 +10,9 @@ actor CopilotProvider: AIProvider {
     /// Timeout for AI summarization (180 seconds for larger batches)
     private let summarizationTimeout: TimeInterval = 180
 
-    /// Cache for available models
+    /// Cache for available models (protected by cacheLock since static vars aren't actor-isolated)
     private static var cachedModels: [String]?
+    private static let cacheLock = NSLock()
 
     func checkAvailability() async -> AIProviderStatus {
         let start = Date()
@@ -400,9 +401,12 @@ actor CopilotProvider: AIProvider {
 
     /// Fetch available models by running copilot with an invalid model name
     static func fetchAvailableModels() async -> [String] {
+        cacheLock.lock()
         if let cached = cachedModels {
+            cacheLock.unlock()
             return cached
         }
+        cacheLock.unlock()
 
         let shell = ShellExecutor.shared
 
@@ -419,7 +423,9 @@ actor CopilotProvider: AIProvider {
                 // Parse the error message to extract model names
                 let models = parseModelsFromError(output)
                 if !models.isEmpty {
+                    cacheLock.lock()
                     cachedModels = models
+                    cacheLock.unlock()
                     return models
                 }
             }
@@ -467,7 +473,9 @@ actor CopilotProvider: AIProvider {
 
     /// Clear cached models to force re-fetch
     static func clearModelCache() {
+        cacheLock.lock()
         cachedModels = nil
+        cacheLock.unlock()
     }
 }
 

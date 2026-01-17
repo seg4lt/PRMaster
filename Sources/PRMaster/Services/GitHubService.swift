@@ -58,7 +58,11 @@ actor GitHubService {
                 }
             }
         }
-        throw lastError!
+        throw lastError ?? NSError(
+            domain: "GitHubService",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "Retry failed with no attempts"]
+        )
     }
 
     private func trackCall(command: String, duration: TimeInterval, success: Bool) {
