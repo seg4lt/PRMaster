@@ -14,7 +14,8 @@ actor ClaudeProvider: AIProvider {
         // caught when the user actually tries to generate summaries.
         do {
             let output = try await shell.execute("claude", arguments: ["--version"])
-            if output.contains("claude") {
+            // Output is like "2.1.12 (Claude Code)" - just check it's not empty
+            if !output.isEmpty {
                 return .available
             }
             return .notInstalled(message: "Claude Code not installed")
