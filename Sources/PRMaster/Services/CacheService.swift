@@ -8,7 +8,9 @@ actor CacheService {
     private let notificationStateFile: URL
 
     private init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            fatalError("Unable to access Application Support directory")
+        }
         cacheDir = appSupport.appendingPathComponent("PRMaster", isDirectory: true)
         prCacheFile = cacheDir.appendingPathComponent("pr_cache.json")
         notificationStateFile = cacheDir.appendingPathComponent("notification_state.json")
@@ -182,7 +184,7 @@ actor CacheService {
         if let prevAuthors = existing.reviewAuthors {
             let prevAuthorsSet = Set(prevAuthors)
             let newReviewers = currentReviewers.subtracting(prevAuthorsSet)
-            if !newReviewers.isEmpty {
+            if let reviewer = newReviewers.first {
                 notificationStates[key] = PRNotificationState(
                     key: key,
                     lastUpdatedAt: pr.pr.updatedAt,
@@ -193,7 +195,7 @@ actor CacheService {
                     commentCount: currentCommentCount
                 )
                 saveStates()
-                return .newReview(by: newReviewers.first!)
+                return .newReview(by: reviewer)
             }
         }
 

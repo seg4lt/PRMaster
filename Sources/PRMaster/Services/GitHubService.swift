@@ -44,7 +44,7 @@ actor GitHubService {
                     case .commandNotFound:
                         throw error
                     case .commandFailed(let output, _):
-                        if output.contains("401") || output.contains("403") && !output.contains("rate limit") {
+                        if (output.contains("401") || output.contains("403")) && !output.contains("rate limit") {
                             throw error
                         }
                     case .timeout:
@@ -78,8 +78,8 @@ actor GitHubService {
         callLogs.append(log)
 
         // Keep only last N entries
-        if callLogs.count > maxLogEntries {
-            callLogs.removeFirst(callLogs.count - maxLogEntries)
+        while callLogs.count > maxLogEntries {
+            callLogs.removeFirst()
         }
     }
 

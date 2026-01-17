@@ -40,6 +40,7 @@ class AISummaryViewModel: ObservableObject {
     }
 
     private var generationTask: Task<Void, Never>?
+    private var retryTasks: [UUID: Task<Void, Never>] = [:]
 
     init() {
         // Default: 1 month ago to today
@@ -432,7 +433,10 @@ class AISummaryViewModel: ObservableObject {
         summaries[index].status = .loading
         statusMessage = "Retrying \(summary.dateRange.dateLabel)..."
 
-        Task.detached { [weak self] in
+        // Cancel any existing retry for this summary
+        retryTasks[summaryId]?.cancel()
+
+        retryTasks[summaryId] = Task.detached { [weak self] in
             guard let self = self else { return }
 
             let commits = summary.dateRange.commits
@@ -468,6 +472,7 @@ class AISummaryViewModel: ObservableObject {
                         self.summaries[idx].status = .completed(result)
                     }
                     self.statusMessage = nil
+                    self.retryTasks.removeValue(forKey: summaryId)
                     self.saveCachedSummaries()
                 }
             } catch {
@@ -476,6 +481,7 @@ class AISummaryViewModel: ObservableObject {
                         self.summaries[idx].status = .error(error.localizedDescription)
                     }
                     self.statusMessage = nil
+                    self.retryTasks.removeValue(forKey: summaryId)
                 }
             }
         }
@@ -483,6 +489,8 @@ class AISummaryViewModel: ObservableObject {
 
     func cancelGeneration() {
         generationTask?.cancel()
+        retryTasks.values.forEach { $0.cancel() }
+        retryTasks.removeAll()
         isLoading = false
         statusMessage = nil
 

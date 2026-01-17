@@ -84,7 +84,7 @@ struct MainView: View {
         if viewModel.authorFilters.isEmpty {
             return "Author"
         } else if viewModel.authorFilters.count == 1 {
-            return "@\(viewModel.authorFilters.first!)"
+            return "@\(viewModel.authorFilters.first ?? "unknown")"
         } else {
             return "\(viewModel.authorFilters.count) authors"
         }
@@ -94,7 +94,7 @@ struct MainView: View {
         if viewModel.repoFilters.isEmpty {
             return "Repo"
         } else if viewModel.repoFilters.count == 1 {
-            let repo = viewModel.repoFilters.first!
+            guard let repo = viewModel.repoFilters.first else { return "1 repo" }
             return repo.split(separator: "/").last.map(String.init) ?? repo
         } else {
             return "\(viewModel.repoFilters.count) repos"
