@@ -38,19 +38,15 @@ struct DateRangeCommits: Identifiable {
 
     var dateLabel: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        let yearFormatter = DateFormatter()
-        yearFormatter.dateFormat = "yyyy"
-        let year = yearFormatter.string(from: endDate)
+        formatter.dateFormat = "MMM d, yyyy"
 
         // Check if single day (same date)
         let calendar = Calendar.current
         if calendar.isDate(startDate, inSameDayAs: endDate) {
-            formatter.dateFormat = "MMM d, yyyy"
             return formatter.string(from: startDate)
         }
 
-        return "\(formatter.string(from: startDate)) - \(formatter.string(from: endDate)), \(year)"
+        return "\(formatter.string(from: startDate)) - \(formatter.string(from: endDate))"
     }
 }
 
