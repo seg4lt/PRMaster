@@ -76,13 +76,13 @@ actor ClaudeProvider: AIProvider {
         }
     }
 
-    func summarizeWeek(
+    func summarizeDateRange(
         commits: [Commit],
-        weekLabel: String,
+        dateLabel: String,
         model: String? = nil
     ) async throws -> String {
         guard !commits.isEmpty else {
-            return "No commits this week."
+            return "No commits in this date range."
         }
 
         // Build the commit list for the prompt
@@ -91,12 +91,12 @@ actor ClaudeProvider: AIProvider {
         }.joined(separator: "\n")
 
         let prompt = """
-        Summarize these commits from \(weekLabel):
+        Summarize these commits from \(dateLabel):
 
         \(commitList)
 
         Output as markdown with:
-        - A "## \(weekLabel)" heading
+        - A "## \(dateLabel)" heading
         - Bullet points grouped by repository (use "**repo-name**:" as sub-heading)
         - Each bullet should describe a key change, feature, or fix
         - Keep bullets concise (1 line each)
@@ -105,7 +105,7 @@ actor ClaudeProvider: AIProvider {
         """
 
         let start = Date()
-        let displayPrompt = "Summarize \(weekLabel) (\(commits.count) commits)"
+        let displayPrompt = "Summarize \(dateLabel) (\(commits.count) commits)"
 
         do {
             // Use a longer timeout for AI summarization (120 seconds)
@@ -167,14 +167,14 @@ actor ClaudeProvider: AIProvider {
 
     // MARK: - Enriched Commit Summarization
 
-    /// Summarize a week using enriched commits with diffs
-    func summarizeWeekEnriched(
+    /// Summarize a date range using enriched commits with diffs
+    func summarizeDateRange(
         commits: [EnrichedCommit],
-        weekLabel: String,
+        dateLabel: String,
         model: String? = nil
     ) async throws -> String {
         guard !commits.isEmpty else {
-            return "No commits this week."
+            return "No commits in this date range."
         }
 
         // Create batches based on token limits
@@ -182,26 +182,26 @@ actor ClaudeProvider: AIProvider {
 
         if batches.count == 1 {
             // Single batch - direct summarization
-            return try await summarizeBatch(commits: batches[0], weekLabel: weekLabel, model: model, isFinalSummary: true)
+            return try await summarizeBatch(commits: batches[0], dateLabel: dateLabel, model: model, isFinalSummary: true)
         } else {
             // Multiple batches - summarize each, then combine
             var batchSummaries: [String] = []
 
             for (index, batch) in batches.enumerated() {
-                let batchLabel = "\(weekLabel) (batch \(index + 1)/\(batches.count))"
-                let summary = try await summarizeBatch(commits: batch, weekLabel: batchLabel, model: model, isFinalSummary: false)
+                let batchLabel = "\(dateLabel) (batch \(index + 1)/\(batches.count))"
+                let summary = try await summarizeBatch(commits: batch, dateLabel: batchLabel, model: model, isFinalSummary: false)
                 batchSummaries.append(summary)
             }
 
             // Combine all batch summaries into final summary
-            return try await combineSummaries(batchSummaries, weekLabel: weekLabel, model: model)
+            return try await combineSummaries(batchSummaries, dateLabel: dateLabel, model: model)
         }
     }
 
     /// Summarize a single batch of commits
     private func summarizeBatch(
         commits: [EnrichedCommit],
-        weekLabel: String,
+        dateLabel: String,
         model: String?,
         isFinalSummary: Bool
     ) async throws -> String {
@@ -231,7 +231,7 @@ actor ClaudeProvider: AIProvider {
         if isFinalSummary {
             outputInstructions = """
             Output as markdown with:
-            - A "## \(weekLabel)" heading
+            - A "## \(dateLabel)" heading
             - Bullet points grouped by repository (use "**repo-name**:" as sub-heading)
             - Each bullet should describe a key change, feature, or fix
             - Keep bullets concise (1-2 lines each)
@@ -248,7 +248,7 @@ actor ClaudeProvider: AIProvider {
         }
 
         let prompt = """
-        Summarize these commits from \(weekLabel):
+        Summarize these commits from \(dateLabel):
 
         \(commitList)
 
@@ -257,7 +257,7 @@ actor ClaudeProvider: AIProvider {
         Do not include commit SHAs. Analyze the diffs to provide meaningful summaries.
         """
 
-        return try await executeClaudePrompt(prompt: prompt, model: model, displayPrompt: "Summarize \(weekLabel) (\(commits.count) commits with diffs)")
+        return try await executeClaudePrompt(prompt: prompt, model: model, displayPrompt: "Summarize \(dateLabel) (\(commits.count) commits with diffs)")
     }
 
     /// Summarize a huge commit by chunking its diff into manageable pieces
@@ -301,8 +301,8 @@ actor ClaudeProvider: AIProvider {
         return combined
     }
 
-    /// Combine multiple batch summaries into a final weekly summary
-    private func combineSummaries(_ summaries: [String], weekLabel: String, model: String?) async throws -> String {
+    /// Combine multiple batch summaries into a final summary
+    private func combineSummaries(_ summaries: [String], dateLabel: String, model: String?) async throws -> String {
         let combinedInput = summaries.enumerated().map { index, summary in
             """
             ### Batch \(index + 1):
@@ -311,12 +311,12 @@ actor ClaudeProvider: AIProvider {
         }.joined(separator: "\n\n")
 
         let prompt = """
-        Combine these partial summaries into a single cohesive weekly summary for \(weekLabel):
+        Combine these partial summaries into a single cohesive summary for \(dateLabel):
 
         \(combinedInput)
 
         Output as markdown with:
-        - A "## \(weekLabel)" heading
+        - A "## \(dateLabel)" heading
         - Bullet points grouped by repository (use "**repo-name**:" as sub-heading)
         - Deduplicate any overlapping changes
         - Consolidate related items

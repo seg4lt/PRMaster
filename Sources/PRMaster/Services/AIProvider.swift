@@ -47,17 +47,17 @@ protocol AIProvider {
     /// Check if provider is available (installed, authenticated, etc.)
     func checkAvailability() async -> AIProviderStatus
 
-    /// Summarize commits for a given week
-    func summarizeWeek(
+    /// Summarize commits for a given date range
+    func summarizeDateRange(
         commits: [Commit],
-        weekLabel: String,
+        dateLabel: String,
         model: String?
     ) async throws -> String
 
     /// Summarize commits with enriched diff data
-    func summarizeWeekEnriched(
+    func summarizeDateRange(
         commits: [EnrichedCommit],
-        weekLabel: String,
+        dateLabel: String,
         model: String?
     ) async throws -> String
 

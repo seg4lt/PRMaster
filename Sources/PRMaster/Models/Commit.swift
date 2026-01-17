@@ -17,22 +17,34 @@ struct Commit: Codable, Identifiable {
     }
 }
 
-struct WeeklyCommits: Identifiable {
-    let weekStart: Date
-    let weekEnd: Date
+struct DateRangeCommits: Identifiable {
+    let id: UUID
+    let startDate: Date
+    let endDate: Date
     let commits: [Commit]
 
-    var id: String {
-        ISO8601DateFormatter().string(from: weekStart)
+    init(id: UUID = UUID(), startDate: Date, endDate: Date, commits: [Commit]) {
+        self.id = id
+        self.startDate = startDate
+        self.endDate = endDate
+        self.commits = commits
     }
 
-    var weekLabel: String {
+    var dateLabel: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d"
         let yearFormatter = DateFormatter()
         yearFormatter.dateFormat = "yyyy"
-        let year = yearFormatter.string(from: weekEnd)
-        return "\(formatter.string(from: weekStart)) - \(formatter.string(from: weekEnd)), \(year)"
+        let year = yearFormatter.string(from: endDate)
+
+        // Check if single day (same date)
+        let calendar = Calendar.current
+        if calendar.isDate(startDate, inSameDayAs: endDate) {
+            formatter.dateFormat = "MMM d, yyyy"
+            return formatter.string(from: startDate)
+        }
+
+        return "\(formatter.string(from: startDate)) - \(formatter.string(from: endDate)), \(year)"
     }
 }
 
@@ -58,11 +70,18 @@ enum SummaryStatus: Equatable {
     }
 }
 
-struct WeeklySummary: Identifiable {
-    var week: WeeklyCommits
+struct DateRangeSummary: Identifiable {
+    let id: UUID
+    var dateRange: DateRangeCommits
     var status: SummaryStatus
+    let createdAt: Date
 
-    var id: String { week.id }
+    init(id: UUID = UUID(), dateRange: DateRangeCommits, status: SummaryStatus, createdAt: Date = Date()) {
+        self.id = id
+        self.dateRange = dateRange
+        self.status = status
+        self.createdAt = createdAt
+    }
 }
 
 // MARK: - GitHub API Response Models

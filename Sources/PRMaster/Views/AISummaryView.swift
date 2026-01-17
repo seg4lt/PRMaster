@@ -41,7 +41,7 @@ struct AISummaryView: View {
             HStack {
                 Image(systemName: "sparkles")
                     .foregroundColor(.purple)
-                Text("AI Weekly Summary")
+                Text("AI Summary")
                     .font(.headline)
                 Spacer()
                 providerStatusBadge
@@ -98,7 +98,7 @@ struct AISummaryView: View {
                         viewModel.cancelGeneration()
                     }
                     .buttonStyle(.bordered)
-                } else if !viewModel.weeklySummaries.isEmpty {
+                } else if !viewModel.summaries.isEmpty {
                     Button {
                         copyAllSummaries()
                     } label: {
@@ -189,16 +189,22 @@ struct AISummaryView: View {
             }
 
             // Main content
-            if viewModel.weeklySummaries.isEmpty && !viewModel.isLoading {
+            if viewModel.summaries.isEmpty && !viewModel.isLoading {
                 emptyState
             } else {
                 ScrollView {
                     LazyVStack(spacing: 12) {
-                        ForEach(Array(viewModel.weeklySummaries.enumerated()), id: \.element.id) { index, summary in
-                            WeeklySummaryCard(
+                        ForEach(Array(viewModel.summaries.enumerated()), id: \.element.id) { index, summary in
+                            SummaryCard(
                                 summary: summary,
                                 onRetry: {
                                     viewModel.retrySummary(at: index)
+                                },
+                                onDelete: {
+                                    viewModel.deleteSummary(id: summary.id)
+                                },
+                                onUpdate: {
+                                    viewModel.updateSummary(id: summary.id)
                                 }
                             )
                         }
@@ -237,7 +243,7 @@ struct AISummaryView: View {
     }
 
     private func copyAllSummaries() {
-        let allText = viewModel.weeklySummaries.compactMap { summary -> String? in
+        let allText = viewModel.summaries.compactMap { summary -> String? in
             guard case .completed(let text) = summary.status else { return nil }
             return text
         }.joined(separator: "\n\n")

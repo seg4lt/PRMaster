@@ -76,13 +76,13 @@ actor CopilotProvider: AIProvider {
         }
     }
 
-    func summarizeWeek(
+    func summarizeDateRange(
         commits: [Commit],
-        weekLabel: String,
+        dateLabel: String,
         model: String? = nil
     ) async throws -> String {
         guard !commits.isEmpty else {
-            return "No commits this week."
+            return "No commits in this date range."
         }
 
         // Build the commit list for the prompt
@@ -91,12 +91,12 @@ actor CopilotProvider: AIProvider {
         }.joined(separator: "\n")
 
         let prompt = """
-        Summarize these commits from \(weekLabel):
+        Summarize these commits from \(dateLabel):
 
         \(commitList)
 
         Output as markdown with:
-        - A "## \(weekLabel)" heading
+        - A "## \(dateLabel)" heading
         - Bullet points grouped by repository (use "**repo-name**:" as sub-heading)
         - Each bullet should describe a key change, feature, or fix
         - Keep bullets concise (1 line each)
@@ -107,7 +107,7 @@ actor CopilotProvider: AIProvider {
         return try await executeCopilotPrompt(
             prompt: prompt,
             model: model,
-            displayPrompt: "Summarize \(weekLabel) (\(commits.count) commits)"
+            displayPrompt: "Summarize \(dateLabel) (\(commits.count) commits)"
         )
     }
 
@@ -116,30 +116,30 @@ actor CopilotProvider: AIProvider {
     /// Max tokens for Copilot (64K limit, leave generous room for prompt overhead and response)
     private static let maxTokensPerCall = 20_000
 
-    func summarizeWeekEnriched(
+    func summarizeDateRange(
         commits: [EnrichedCommit],
-        weekLabel: String,
+        dateLabel: String,
         model: String? = nil
     ) async throws -> String {
         guard !commits.isEmpty else {
-            return "No commits this week."
+            return "No commits in this date range."
         }
 
         // Create smaller batches for Copilot's 64K token limit
         let batches = createCopilotBatches(from: commits)
 
         if batches.count == 1 {
-            return try await summarizeBatch(commits: batches[0], weekLabel: weekLabel, model: model, isFinalSummary: true)
+            return try await summarizeBatch(commits: batches[0], dateLabel: dateLabel, model: model, isFinalSummary: true)
         } else {
             var batchSummaries: [String] = []
 
             for (index, batch) in batches.enumerated() {
-                let batchLabel = "\(weekLabel) (batch \(index + 1)/\(batches.count))"
-                let summary = try await summarizeBatch(commits: batch, weekLabel: batchLabel, model: model, isFinalSummary: false)
+                let batchLabel = "\(dateLabel) (batch \(index + 1)/\(batches.count))"
+                let summary = try await summarizeBatch(commits: batch, dateLabel: batchLabel, model: model, isFinalSummary: false)
                 batchSummaries.append(summary)
             }
 
-            return try await combineSummaries(batchSummaries, weekLabel: weekLabel, model: model)
+            return try await combineSummaries(batchSummaries, dateLabel: dateLabel, model: model)
         }
     }
 
@@ -189,7 +189,7 @@ actor CopilotProvider: AIProvider {
 
     private func summarizeBatch(
         commits: [EnrichedCommit],
-        weekLabel: String,
+        dateLabel: String,
         model: String?,
         isFinalSummary: Bool
     ) async throws -> String {
@@ -222,7 +222,7 @@ actor CopilotProvider: AIProvider {
         if isFinalSummary {
             outputInstructions = """
             Output as markdown with:
-            - A "## \(weekLabel)" heading
+            - A "## \(dateLabel)" heading
             - Bullet points grouped by repository (use "**repo-name**:" as sub-heading)
             - Each bullet should describe a key change, feature, or fix
             - Keep bullets concise (1-2 lines each)
@@ -239,7 +239,7 @@ actor CopilotProvider: AIProvider {
         }
 
         let prompt = """
-        Summarize these commits from \(weekLabel):
+        Summarize these commits from \(dateLabel):
 
         \(commitList)
 
@@ -251,7 +251,7 @@ actor CopilotProvider: AIProvider {
         return try await executeCopilotPrompt(
             prompt: prompt,
             model: model,
-            displayPrompt: "Summarize \(weekLabel) (\(commits.count) commits with diffs)"
+            displayPrompt: "Summarize \(dateLabel) (\(commits.count) commits with diffs)"
         )
     }
 
@@ -292,7 +292,7 @@ actor CopilotProvider: AIProvider {
         return chunkSummaries.joined(separator: "\n\n")
     }
 
-    private func combineSummaries(_ summaries: [String], weekLabel: String, model: String?) async throws -> String {
+    private func combineSummaries(_ summaries: [String], dateLabel: String, model: String?) async throws -> String {
         let combinedInput = summaries.enumerated().map { index, summary in
             """
             ### Batch \(index + 1):
@@ -301,12 +301,12 @@ actor CopilotProvider: AIProvider {
         }.joined(separator: "\n\n")
 
         let prompt = """
-        Combine these partial summaries into a single cohesive weekly summary for \(weekLabel):
+        Combine these partial summaries into a single cohesive summary for \(dateLabel):
 
         \(combinedInput)
 
         Output as markdown with:
-        - A "## \(weekLabel)" heading
+        - A "## \(dateLabel)" heading
         - Bullet points grouped by repository (use "**repo-name**:" as sub-heading)
         - Deduplicate any overlapping changes
         - Consolidate related items

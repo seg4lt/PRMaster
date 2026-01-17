@@ -1,19 +1,21 @@
 import SwiftUI
 import AppKit
 
-struct WeeklySummaryCard: View {
-    let summary: WeeklySummary
+struct SummaryCard: View {
+    let summary: DateRangeSummary
     let onRetry: () -> Void
+    let onDelete: () -> Void
+    let onUpdate: () -> Void
     @State private var copied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
-                Text(summary.week.weekLabel)
+                Text(summary.dateRange.dateLabel)
                     .font(.headline)
 
-                Text("\(summary.week.commits.count) commits")
+                Text("\(summary.dateRange.commits.count) commits")
                     .font(.caption)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
@@ -22,16 +24,39 @@ struct WeeklySummaryCard: View {
 
                 Spacer()
 
-                // Copy button for completed summaries
+                // Action buttons for completed summaries
                 if case .completed(let text) = summary.status {
-                    Button {
-                        copyToClipboard(text)
-                    } label: {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .foregroundColor(copied ? .green : .secondary)
+                    HStack(spacing: 8) {
+                        // Delete button
+                        Button {
+                            onDelete()
+                        } label: {
+                            Image(systemName: "trash")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Delete summary")
+
+                        // Copy button
+                        Button {
+                            copyToClipboard(text)
+                        } label: {
+                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                .foregroundColor(copied ? .green : .secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Copy summary")
+
+                        // Update button
+                        Button {
+                            onUpdate()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Re-generate with current date range")
                     }
-                    .buttonStyle(.borderless)
-                    .help("Copy summary")
                 }
             }
 

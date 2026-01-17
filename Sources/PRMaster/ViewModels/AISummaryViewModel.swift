@@ -7,7 +7,7 @@ class AISummaryViewModel: ObservableObject {
 
     @Published var startDate: Date
     @Published var endDate: Date
-    @Published var weeklySummaries: [WeeklySummary] = []
+    @Published var summaries: [DateRangeSummary] = []
     @Published var isLoading = false
     @Published var error: String?
     @Published var statusMessage: String?
@@ -54,7 +54,7 @@ class AISummaryViewModel: ObservableObject {
     }
 
     var hasMorePending: Bool {
-        weeklySummaries.contains { summary in
+        summaries.contains { summary in
             if case .pending = summary.status { return true }
             if case .loading = summary.status { return true }
             return false
@@ -207,15 +207,26 @@ class AISummaryViewModel: ObservableObject {
         error = nil
         statusMessage = "Fetching GitHub user..."
 
-        // Preserve existing completed summaries keyed by week ID
-        let existingSummaries = Dictionary(uniqueKeysWithValues:
-            weeklySummaries.compactMap { summary -> (String, WeeklySummary)? in
-                if case .completed = summary.status {
-                    return (summary.week.id, summary)
-                }
-                return nil
-            }
+        // Create a new summary entry for the selected date range (append, don't merge)
+        let summaryId = UUID()
+        let calendar = Calendar.current
+        let rangeStart = calendar.startOfDay(for: startDate)
+        let rangeEnd = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: endDate) ?? endDate
+
+        let dateRange = DateRangeCommits(
+            id: summaryId,
+            startDate: rangeStart,
+            endDate: rangeEnd,
+            commits: []
         )
+        let newSummary = DateRangeSummary(
+            id: summaryId,
+            dateRange: dateRange,
+            status: .pending
+        )
+
+        // Append to existing summaries (newest first)
+        summaries.insert(newSummary, at: 0)
 
         generationTask = Task.detached { [weak self] in
             guard let self = self else { return }
@@ -230,39 +241,16 @@ class AISummaryViewModel: ObservableObject {
                     self.error = "Could not get current user"
                     self.isLoading = false
                     self.statusMessage = nil
+                    // Remove the failed summary
+                    self.summaries.removeAll { $0.id == summaryId }
                 }
                 return
             }
 
             // Get selected repos and dates
             let repos = await MainActor.run { Array(self.selectedRepos) }
-            let startDate = await MainActor.run { self.startDate }
-            let endDate = await MainActor.run { self.endDate }
-
-            // Break date range into weeks FIRST (before fetching)
-            let weekRanges = await MainActor.run { self.generateWeekRanges(from: startDate, to: endDate) }
-
-            // Initialize all weeks as pending (with empty commits for now)
-            await MainActor.run {
-                var newSummaries = weekRanges.map { range in
-                    let week = WeeklyCommits(
-                        weekStart: range.start,
-                        weekEnd: range.end,
-                        commits: []
-                    )
-                    return WeeklySummary(week: week, status: .pending)
-                }
-
-                // Merge existing summaries for weeks not being regenerated
-                let newWeekIds = Set(newSummaries.map { $0.week.id })
-                for (weekId, existingSummary) in existingSummaries where !newWeekIds.contains(weekId) {
-                    newSummaries.append(existingSummary)
-                }
-
-                // Sort by week start date
-                newSummaries.sort { $0.week.weekStart < $1.week.weekStart }
-                self.weeklySummaries = newSummaries
-            }
+            let startDate = rangeStart
+            let endDate = rangeEnd
 
             if Task.isCancelled { return }
 
@@ -271,142 +259,128 @@ class AISummaryViewModel: ObservableObject {
             let model = await MainActor.run { self.selectedModel }
             let provider = providerType.createProvider()
 
-            // Process each week: fetch commits, then summarize
-            let summaryCount = await MainActor.run { self.weeklySummaries.count }
-            var totalCommits = 0
-
-            for index in 0..<summaryCount {
-                if Task.isCancelled { break }
-
-                // Skip already-completed summaries (preserved from merge)
-                let currentStatus = await MainActor.run { self.weeklySummaries[index].status }
-                if case .completed = currentStatus {
-                    continue
-                }
-
-                let weekData = await MainActor.run { self.weeklySummaries[index].week }
-                let weekLabel = weekData.weekLabel
-
-                // Mark as loading and update status
-                await MainActor.run {
-                    self.weeklySummaries[index].status = .loading
-                    self.statusMessage = "Fetching commits for \(weekLabel)..."
-                }
-
-                do {
-                    // Fetch commits for this specific week
-                    let commits = try await GitHubService.shared.fetchUserCommits(
-                        author: currentUser,
-                        startDate: weekData.weekStart,
-                        endDate: weekData.weekEnd,
-                        repos: repos
-                    )
-
-                    if Task.isCancelled { break }
-
-                    // Update the week with actual commits
-                    await MainActor.run {
-                        self.weeklySummaries[index].week = WeeklyCommits(
-                            weekStart: weekData.weekStart,
-                            weekEnd: weekData.weekEnd,
-                            commits: commits
-                        )
-                    }
-
-                    totalCommits += commits.count
-
-                    if commits.isEmpty {
-                        // No commits this week
-                        await MainActor.run {
-                            self.weeklySummaries[index].status = .completed("No commits this week.")
-                        }
-                    } else {
-                        // Fetch diffs for commits
-                        await MainActor.run {
-                            self.statusMessage = "Fetching diffs for \(weekLabel) (\(commits.count) commits)..."
-                        }
-
-                        let diffs = await GitHubService.shared.fetchCommitDiffs(commits: commits)
-
-                        if Task.isCancelled { break }
-
-                        // Create enriched commits
-                        var enrichedCommits = commits.map { commit in
-                            EnrichedCommit(commit: commit, diff: diffs[commit.sha])
-                        }
-
-                        // Pre-process huge commits by chunking and summarizing their diffs
-                        var processedCommits: [EnrichedCommit] = []
-                        for enriched in enrichedCommits {
-                            if enriched.sizeCategory == .huge {
-                                await MainActor.run {
-                                    self.statusMessage = "Summarizing large diff for \(enriched.commit.shortSha)..."
-                                }
-                                let summary = try await provider.summarizeHugeCommit(enriched, model: model)
-                                // Create new EnrichedCommit with summary instead of full diff
-                                processedCommits.append(EnrichedCommit(commit: enriched.commit, diff: summary))
-                            } else {
-                                processedCommits.append(enriched)
-                            }
-                        }
-                        enrichedCommits = processedCommits
-
-                        // Summarize this week with diffs
-                        let batches = CommitBatcher.createBatches(from: enrichedCommits)
-                        await MainActor.run {
-                            if batches.count > 1 {
-                                self.statusMessage = "Summarizing \(weekLabel) (\(commits.count) commits in \(batches.count) batches)..."
-                            } else {
-                                self.statusMessage = "Summarizing \(weekLabel) (\(commits.count) commits)..."
-                            }
-                        }
-
-                        let result = try await provider.summarizeWeekEnriched(commits: enrichedCommits, weekLabel: weekLabel, model: model)
-
-                        if !Task.isCancelled {
-                            await MainActor.run {
-                                self.weeklySummaries[index].status = .completed(result)
-                            }
-                        }
-                    }
-                } catch {
-                    if !Task.isCancelled {
-                        await MainActor.run {
-                            self.weeklySummaries[index].status = .error(error.localizedDescription)
-                        }
-                    }
-                }
+            // Find the index of our summary
+            guard let index = await MainActor.run(body: { self.summaries.firstIndex(where: { $0.id == summaryId }) }) else {
+                return
             }
 
-            let finalTotalCommits = totalCommits
+            let dateLabel = await MainActor.run { self.summaries[index].dateRange.dateLabel }
+
+            // Mark as loading
             await MainActor.run {
-                self.isLoading = false
-                self.statusMessage = nil
-                if finalTotalCommits == 0 {
-                    self.error = "No commits found in the selected date range"
+                self.summaries[index].status = .loading
+                self.statusMessage = "Fetching commits for \(dateLabel)..."
+            }
+
+            do {
+                // Fetch commits for the entire date range
+                let commits = try await GitHubService.shared.fetchUserCommits(
+                    author: currentUser,
+                    startDate: startDate,
+                    endDate: endDate,
+                    repos: repos
+                )
+
+                if Task.isCancelled { return }
+
+                // Update with actual commits
+                await MainActor.run {
+                    self.summaries[index].dateRange = DateRangeCommits(
+                        id: summaryId,
+                        startDate: startDate,
+                        endDate: endDate,
+                        commits: commits
+                    )
                 }
-                self.saveCachedSummaries()
+
+                if commits.isEmpty {
+                    await MainActor.run {
+                        self.summaries[index].status = .completed("No commits in this date range.")
+                        self.isLoading = false
+                        self.statusMessage = nil
+                        self.saveCachedSummaries()
+                    }
+                    return
+                }
+
+                // Fetch diffs for commits
+                await MainActor.run {
+                    self.statusMessage = "Fetching diffs for \(dateLabel) (\(commits.count) commits)..."
+                }
+
+                let diffs = await GitHubService.shared.fetchCommitDiffs(commits: commits)
+
+                if Task.isCancelled { return }
+
+                // Create enriched commits
+                var enrichedCommits = commits.map { commit in
+                    EnrichedCommit(commit: commit, diff: diffs[commit.sha])
+                }
+
+                // Pre-process huge commits
+                var processedCommits: [EnrichedCommit] = []
+                for enriched in enrichedCommits {
+                    if enriched.sizeCategory == .huge {
+                        await MainActor.run {
+                            self.statusMessage = "Summarizing large diff for \(enriched.commit.shortSha)..."
+                        }
+                        let summary = try await provider.summarizeHugeCommit(enriched, model: model)
+                        processedCommits.append(EnrichedCommit(commit: enriched.commit, diff: summary))
+                    } else {
+                        processedCommits.append(enriched)
+                    }
+                }
+                enrichedCommits = processedCommits
+
+                // Summarize with diffs
+                let batches = CommitBatcher.createBatches(from: enrichedCommits)
+                await MainActor.run {
+                    if batches.count > 1 {
+                        self.statusMessage = "Summarizing \(dateLabel) (\(commits.count) commits in \(batches.count) batches)..."
+                    } else {
+                        self.statusMessage = "Summarizing \(dateLabel) (\(commits.count) commits)..."
+                    }
+                }
+
+                let result = try await provider.summarizeDateRange(commits: enrichedCommits, dateLabel: dateLabel, model: model)
+
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        self.summaries[index].status = .completed(result)
+                        self.isLoading = false
+                        self.statusMessage = nil
+                        self.saveCachedSummaries()
+                    }
+                }
+            } catch {
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        self.summaries[index].status = .error(error.localizedDescription)
+                        self.isLoading = false
+                        self.statusMessage = nil
+                    }
+                }
             }
         }
     }
 
     func retrySummary(at index: Int) {
-        guard index < weeklySummaries.count else { return }
+        guard index < summaries.count else { return }
 
-        let summary = weeklySummaries[index]
-        weeklySummaries[index].status = .loading
-        statusMessage = "Retrying \(summary.week.weekLabel)..."
+        let summary = summaries[index]
+        summaries[index].status = .loading
+        statusMessage = "Retrying \(summary.dateRange.dateLabel)..."
 
         Task.detached { [weak self] in
             guard let self = self else { return }
 
-            let commits = summary.week.commits
-            let weekLabel = summary.week.weekLabel
+            let commits = summary.dateRange.commits
+            let dateLabel = summary.dateRange.dateLabel
 
             do {
                 // Re-fetch diffs for the retry
                 await MainActor.run {
-                    self.statusMessage = "Fetching diffs for \(weekLabel)..."
+                    self.statusMessage = "Fetching diffs for \(dateLabel)..."
                 }
 
                 let diffs = await GitHubService.shared.fetchCommitDiffs(commits: commits)
@@ -417,25 +391,25 @@ class AISummaryViewModel: ObservableObject {
                 }
 
                 await MainActor.run {
-                    self.statusMessage = "Summarizing \(weekLabel)..."
+                    self.statusMessage = "Summarizing \(dateLabel)..."
                 }
 
                 let providerType = await MainActor.run { self.selectedProviderType }
                 let model = await MainActor.run { self.selectedModel }
                 let provider = providerType.createProvider()
-                let result = try await provider.summarizeWeekEnriched(
+                let result = try await provider.summarizeDateRange(
                     commits: enrichedCommits,
-                    weekLabel: weekLabel,
+                    dateLabel: dateLabel,
                     model: model
                 )
                 await MainActor.run {
-                    self.weeklySummaries[index].status = .completed(result)
+                    self.summaries[index].status = .completed(result)
                     self.statusMessage = nil
                     self.saveCachedSummaries()
                 }
             } catch {
                 await MainActor.run {
-                    self.weeklySummaries[index].status = .error(error.localizedDescription)
+                    self.summaries[index].status = .error(error.localizedDescription)
                     self.statusMessage = nil
                 }
             }
@@ -447,77 +421,177 @@ class AISummaryViewModel: ObservableObject {
         isLoading = false
         statusMessage = nil
 
-        // Mark any loading/pending summaries as cancelled
-        for index in 0..<weeklySummaries.count {
-            switch weeklySummaries[index].status {
-            case .pending, .loading:
-                weeklySummaries[index].status = .error("Cancelled")
-            default:
-                break
-            }
+        // Remove any pending/loading summaries
+        summaries.removeAll { summary in
+            if case .pending = summary.status { return true }
+            if case .loading = summary.status { return true }
+            return false
         }
     }
 
     func clearCache() {
-        weeklySummaries = []
+        summaries = []
         UserDefaults.standard.removeObject(forKey: "aiSummaryCache")
     }
 
-    // MARK: - Private Helpers
-
-    private func generateWeekRanges(from startDate: Date, to endDate: Date) -> [(start: Date, end: Date)] {
-        var calendar = Calendar(identifier: .iso8601)
-        calendar.firstWeekday = 2  // Monday = 2
-        var ranges: [(start: Date, end: Date)] = []
-
-        // Find Monday of the week containing startDate
-        var currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: startDate)?.start ?? startDate
-
-        while currentWeekStart <= endDate {
-            // Week ends Sunday at 23:59:59
-            let weekEnd = calendar.date(byAdding: .day, value: 6, to: currentWeekStart)!
-            let weekEndMidnight = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: weekEnd)!
-
-            ranges.append((start: currentWeekStart, end: weekEndMidnight))
-
-            // Move to next Monday
-            guard let nextWeek = calendar.date(byAdding: .weekOfYear, value: 1, to: currentWeekStart) else { break }
-            currentWeekStart = nextWeek
-        }
-
-        return ranges
+    func deleteSummary(id: UUID) {
+        summaries.removeAll { $0.id == id }
+        saveCachedSummaries()
     }
 
+    func updateSummary(id: UUID) {
+        guard let index = summaries.firstIndex(where: { $0.id == id }) else { return }
+
+        let calendar = Calendar.current
+        let rangeStart = calendar.startOfDay(for: startDate)
+        let rangeEnd = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: endDate) ?? endDate
+
+        // Update the date range and re-generate
+        summaries[index].dateRange = DateRangeCommits(
+            id: id,
+            startDate: rangeStart,
+            endDate: rangeEnd,
+            commits: []
+        )
+        summaries[index].status = .loading
+        isLoading = true
+        statusMessage = "Updating summary..."
+
+        let summaryId = id
+
+        generationTask = Task.detached { [weak self] in
+            guard let self = self else { return }
+
+            guard let currentUser = try? await GitHubService.shared.getCurrentUser() else {
+                await MainActor.run {
+                    self.error = "Could not get current user"
+                    self.isLoading = false
+                    self.statusMessage = nil
+                }
+                return
+            }
+
+            let repos = await MainActor.run { Array(self.selectedRepos) }
+            let providerType = await MainActor.run { self.selectedProviderType }
+            let model = await MainActor.run { self.selectedModel }
+            let provider = providerType.createProvider()
+
+            guard let index = await MainActor.run(body: { self.summaries.firstIndex(where: { $0.id == summaryId }) }) else {
+                return
+            }
+
+            let dateLabel = await MainActor.run { self.summaries[index].dateRange.dateLabel }
+
+            await MainActor.run {
+                self.statusMessage = "Fetching commits for \(dateLabel)..."
+            }
+
+            do {
+                let commits = try await GitHubService.shared.fetchUserCommits(
+                    author: currentUser,
+                    startDate: rangeStart,
+                    endDate: rangeEnd,
+                    repos: repos
+                )
+
+                if Task.isCancelled { return }
+
+                await MainActor.run {
+                    self.summaries[index].dateRange = DateRangeCommits(
+                        id: summaryId,
+                        startDate: rangeStart,
+                        endDate: rangeEnd,
+                        commits: commits
+                    )
+                }
+
+                if commits.isEmpty {
+                    await MainActor.run {
+                        self.summaries[index].status = .completed("No commits in this date range.")
+                        self.isLoading = false
+                        self.statusMessage = nil
+                        self.saveCachedSummaries()
+                    }
+                    return
+                }
+
+                await MainActor.run {
+                    self.statusMessage = "Fetching diffs for \(dateLabel) (\(commits.count) commits)..."
+                }
+
+                let diffs = await GitHubService.shared.fetchCommitDiffs(commits: commits)
+
+                if Task.isCancelled { return }
+
+                var enrichedCommits = commits.map { commit in
+                    EnrichedCommit(commit: commit, diff: diffs[commit.sha])
+                }
+
+                var processedCommits: [EnrichedCommit] = []
+                for enriched in enrichedCommits {
+                    if enriched.sizeCategory == .huge {
+                        await MainActor.run {
+                            self.statusMessage = "Summarizing large diff for \(enriched.commit.shortSha)..."
+                        }
+                        let summary = try await provider.summarizeHugeCommit(enriched, model: model)
+                        processedCommits.append(EnrichedCommit(commit: enriched.commit, diff: summary))
+                    } else {
+                        processedCommits.append(enriched)
+                    }
+                }
+                enrichedCommits = processedCommits
+
+                let batches = CommitBatcher.createBatches(from: enrichedCommits)
+                await MainActor.run {
+                    if batches.count > 1 {
+                        self.statusMessage = "Summarizing \(dateLabel) (\(commits.count) commits in \(batches.count) batches)..."
+                    } else {
+                        self.statusMessage = "Summarizing \(dateLabel) (\(commits.count) commits)..."
+                    }
+                }
+
+                let result = try await provider.summarizeDateRange(commits: enrichedCommits, dateLabel: dateLabel, model: model)
+
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        self.summaries[index].status = .completed(result)
+                        self.isLoading = false
+                        self.statusMessage = nil
+                        self.saveCachedSummaries()
+                    }
+                }
+            } catch {
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        self.summaries[index].status = .error(error.localizedDescription)
+                        self.isLoading = false
+                        self.statusMessage = nil
+                    }
+                }
+            }
+        }
+    }
 
     // MARK: - Caching
 
     private func saveCachedSummaries() {
-        // Load existing cache
-        var existingCache: [String: CachedSummary] = [:]
-        if let data = UserDefaults.standard.data(forKey: "aiSummaryCache"),
-           let cached = try? JSONDecoder().decode([CachedSummary].self, from: data) {
-            for summary in cached {
-                let key = ISO8601DateFormatter().string(from: summary.weekStart)
-                existingCache[key] = summary
-            }
-        }
-
-        // Merge new completed summaries (override existing, add new)
-        for summary in weeklySummaries {
-            guard case .completed(let text) = summary.status else { continue }
-            let key = summary.week.id
-            existingCache[key] = CachedSummary(
-                weekStart: summary.week.weekStart,
-                weekEnd: summary.week.weekEnd,
-                weekLabel: summary.week.weekLabel,
-                commitCount: summary.week.commits.count,
-                summaryText: text
+        // Convert completed summaries to cache format
+        let cacheItems = summaries.compactMap { summary -> CachedSummary? in
+            guard case .completed(let text) = summary.status else { return nil }
+            return CachedSummary(
+                id: summary.id,
+                startDate: summary.dateRange.startDate,
+                endDate: summary.dateRange.endDate,
+                dateLabel: summary.dateRange.dateLabel,
+                commitCount: summary.dateRange.commits.count,
+                summaryText: text,
+                createdAt: summary.createdAt
             )
         }
 
-        // Sort by date and save
-        let sortedCache = existingCache.values.sorted { $0.weekStart < $1.weekStart }
-        if let data = try? JSONEncoder().encode(Array(sortedCache)) {
+        // Sort by createdAt descending (newest first)
+        let sortedCache = cacheItems.sorted { $0.createdAt > $1.createdAt }
+        if let data = try? JSONEncoder().encode(sortedCache) {
             UserDefaults.standard.set(data, forKey: "aiSummaryCache")
         }
     }
@@ -528,14 +602,20 @@ class AISummaryViewModel: ObservableObject {
             return
         }
 
-        // Restore cached summaries (without commit details, just the summary text)
-        weeklySummaries = cached.map { cache in
-            let week = WeeklyCommits(
-                weekStart: cache.weekStart,
-                weekEnd: cache.weekEnd,
+        // Restore cached summaries (sorted by createdAt descending)
+        summaries = cached.sorted { $0.createdAt > $1.createdAt }.map { cache in
+            let dateRange = DateRangeCommits(
+                id: cache.id,
+                startDate: cache.startDate,
+                endDate: cache.endDate,
                 commits: [] // We don't cache commits, just the summary
             )
-            return WeeklySummary(week: week, status: .completed(cache.summaryText))
+            return DateRangeSummary(
+                id: cache.id,
+                dateRange: dateRange,
+                status: .completed(cache.summaryText),
+                createdAt: cache.createdAt
+            )
         }
     }
 }
@@ -543,9 +623,11 @@ class AISummaryViewModel: ObservableObject {
 // MARK: - Cache Models
 
 private struct CachedSummary: Codable {
-    let weekStart: Date
-    let weekEnd: Date
-    let weekLabel: String
+    let id: UUID
+    let startDate: Date
+    let endDate: Date
+    let dateLabel: String
     let commitCount: Int
     let summaryText: String
+    let createdAt: Date
 }
