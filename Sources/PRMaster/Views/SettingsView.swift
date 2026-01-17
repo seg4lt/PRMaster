@@ -13,9 +13,12 @@ struct SettingsView: View {
     @AppStorage("badgeFilterId") private var badgeFilterId: String = ""
     @AppStorage("badgeConfig") private var badgeConfigJSON: String = "[]"  // JSON array of BadgeSourceConfig
     @AppStorage("aiProvider") private var selectedProvider: String = AIProviderType.claude.rawValue
+    @AppStorage("aiModel") private var selectedModel: String = AIProviderType.claude.defaultModel
     @Query private var savedFilters: [NotificationFilter]
     @State private var ghStatus: GHStatus = .checking
     @State private var aiProviderStatus: AIProviderStatus = .notInstalled(message: "Checking...")
+    @State private var copilotModels: [String] = []
+    @State private var isLoadingModels = false
 
     private var badgeConfigs: [BadgeSourceConfig] {
         (try? JSONDecoder().decode([BadgeSourceConfig].self, from: Data(badgeConfigJSON.utf8))) ?? []
@@ -104,10 +107,16 @@ struct SettingsView: View {
         .task {
             await checkGHStatus()
             await checkAIProviderStatus()
+            await loadModelsIfNeeded()
         }
-        .onChange(of: selectedProvider) { _, _ in
+        .onChange(of: selectedProvider) { _, newValue in
             Task {
                 await checkAIProviderStatus()
+                // Reset model to default when switching providers
+                if let providerType = AIProviderType(rawValue: newValue) {
+                    selectedModel = providerType.defaultModel
+                }
+                await loadModelsIfNeeded()
             }
         }
     }
@@ -136,22 +145,12 @@ struct SettingsView: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.red)
                     Text(msg)
-                    Button("Install Claude Code") {
-                        if let url = URL(string: "https://claude.ai/code") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    installButton
                 case .notAuthenticated(let msg):
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
                     Text(msg)
-                    Button("Run claude login") {
-                        openTerminalWithCommand("claude login")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    loginButton
                 case .error(let msg):
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.red)
@@ -160,9 +159,92 @@ struct SettingsView: View {
             }
             .font(.caption)
 
+            // Model selection
+            modelSelectionView
+
             Text("Used for AI Weekly Summary feature")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var installButton: some View {
+        if selectedProvider == AIProviderType.claude.rawValue {
+            Button("Install Claude Code") {
+                if let url = URL(string: "https://claude.ai/code") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        } else {
+            Button("Install Copilot CLI") {
+                if let url = URL(string: "https://githubnext.com/projects/copilot-cli") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
+    @ViewBuilder
+    private var loginButton: some View {
+        if selectedProvider == AIProviderType.claude.rawValue {
+            Button("Run claude login") {
+                openTerminalWithCommand("claude login")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        } else {
+            Button("Run copilot auth") {
+                openTerminalWithCommand("copilot auth")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
+    @ViewBuilder
+    private var modelSelectionView: some View {
+        if let providerType = AIProviderType(rawValue: selectedProvider) {
+            HStack {
+                Text("Model:")
+                    .font(.caption)
+
+                if providerType == .copilot {
+                    if isLoadingModels {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                        Text("Loading models...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if copilotModels.isEmpty {
+                        TextField("Model name", text: $selectedModel)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 150)
+                    } else {
+                        Picker("", selection: $selectedModel) {
+                            ForEach(copilotModels, id: \.self) { model in
+                                Text(model).tag(model)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 200)
+                    }
+                } else {
+                    // Claude - static list
+                    Picker("", selection: $selectedModel) {
+                        ForEach(providerType.availableModels, id: \.self) { model in
+                            Text(model).tag(model)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 120)
+                }
+            }
+            .padding(.top, 4)
         }
     }
 
@@ -174,6 +256,17 @@ struct SettingsView: View {
         guard let providerType = AIProviderType(rawValue: selectedProvider) else { return }
         let provider = providerType.createProvider()
         aiProviderStatus = await provider.checkAvailability()
+    }
+
+    private func loadModelsIfNeeded() async {
+        guard let providerType = AIProviderType(rawValue: selectedProvider),
+              providerType == .copilot else {
+            return
+        }
+
+        isLoadingModels = true
+        copilotModels = await CopilotProvider.fetchAvailableModels()
+        isLoadingModels = false
     }
 
     private var ghStatusSection: some View {

@@ -50,24 +50,55 @@ protocol AIProvider {
     /// Summarize commits for a given week
     func summarizeWeek(
         commits: [Commit],
-        weekLabel: String
+        weekLabel: String,
+        model: String?
+    ) async throws -> String
+
+    /// Summarize commits with enriched diff data
+    func summarizeWeekEnriched(
+        commits: [EnrichedCommit],
+        weekLabel: String,
+        model: String?
+    ) async throws -> String
+
+    /// Summarize a huge commit by chunking its diff
+    func summarizeHugeCommit(
+        _ commit: EnrichedCommit,
+        model: String?
     ) async throws -> String
 }
 
 /// Available AI provider types
 enum AIProviderType: String, CaseIterable, Codable {
     case claude = "claude"
-    // Future: case copilot = "copilot"
+    case copilot = "copilot"
 
     var displayName: String {
         switch self {
         case .claude: return "Claude Code"
+        case .copilot: return "Copilot CLI"
         }
     }
 
     func createProvider() -> any AIProvider {
         switch self {
         case .claude: return ClaudeProvider()
+        case .copilot: return CopilotProvider()
+        }
+    }
+
+    /// Available models for this provider (static list for Claude, empty for Copilot which is fetched dynamically)
+    var availableModels: [String] {
+        switch self {
+        case .claude: return ["sonnet", "opus", "haiku"]
+        case .copilot: return [] // Fetched dynamically
+        }
+    }
+
+    var defaultModel: String {
+        switch self {
+        case .claude: return "sonnet"
+        case .copilot: return "claude-sonnet-4"
         }
     }
 }

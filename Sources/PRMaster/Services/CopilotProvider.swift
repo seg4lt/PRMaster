@@ -1,73 +1,73 @@
 import Foundation
 
-/// Claude Code CLI implementation of AIProvider
-actor ClaudeProvider: AIProvider {
-    static let id = "claude"
-    static let displayName = "Claude Code"
+/// GitHub Copilot CLI implementation of AIProvider
+actor CopilotProvider: AIProvider {
+    static let id = "copilot"
+    static let displayName = "Copilot CLI"
 
     private let shell = ShellExecutor.shared
 
     /// Timeout for AI summarization (180 seconds for larger batches)
     private let summarizationTimeout: TimeInterval = 180
 
+    /// Cache for available models
+    private static var cachedModels: [String]?
+
     func checkAvailability() async -> AIProviderStatus {
-        // Check if claude CLI is installed by running --version
         let start = Date()
 
         do {
-            // Use a shorter timeout for version check (10 seconds)
-            let output = try await shell.execute("claude", arguments: ["--version"], timeout: 10)
+            // Check if copilot CLI is installed by running --version
+            let output = try await shell.execute("copilot", arguments: ["--version"], timeout: 10)
             let duration = Date().timeIntervalSince(start)
 
             await GitHubService.shared.addExternalLog(
-                command: "claude --version",
+                command: "copilot --version",
                 duration: duration,
                 success: true,
                 prompt: nil
             )
 
-            // Output is like "2.1.12 (Claude Code)" - just check it's not empty
             if !output.isEmpty {
                 return .available
             }
-            return .notInstalled(message: "Claude Code not installed")
+            return .notInstalled(message: "Copilot CLI not installed")
         } catch let error as ShellError {
             let duration = Date().timeIntervalSince(start)
 
             switch error {
             case .commandNotFound(let cmd):
                 await GitHubService.shared.addExternalLog(
-                    command: "claude --version",
+                    command: "copilot --version",
                     duration: duration,
                     success: false,
                     prompt: "Command not found: \(cmd)"
                 )
-                return .notInstalled(message: "Claude Code not found in PATH")
+                return .notInstalled(message: "Copilot CLI not found in PATH")
 
             case .commandFailed(let output, let code):
                 await GitHubService.shared.addExternalLog(
-                    command: "claude --version",
+                    command: "copilot --version",
                     duration: duration,
                     success: false,
                     prompt: "Exit code \(code)"
                 )
-                // Surface the actual error
                 let truncatedOutput = output.prefix(200)
                 return .error("Exit \(code): \(truncatedOutput)")
 
             case .timeout(let seconds):
                 await GitHubService.shared.addExternalLog(
-                    command: "claude --version",
+                    command: "copilot --version",
                     duration: duration,
                     success: false,
                     prompt: "Timeout after \(Int(seconds))s"
                 )
-                return .error("Claude command timed out after \(Int(seconds))s")
+                return .error("Copilot command timed out after \(Int(seconds))s")
             }
         } catch {
             let duration = Date().timeIntervalSince(start)
             await GitHubService.shared.addExternalLog(
-                command: "claude --version",
+                command: "copilot --version",
                 duration: duration,
                 success: false,
                 prompt: error.localizedDescription
@@ -104,70 +104,15 @@ actor ClaudeProvider: AIProvider {
         Do not include commit SHAs.
         """
 
-        let start = Date()
-        let displayPrompt = "Summarize \(weekLabel) (\(commits.count) commits)"
-
-        do {
-            // Use a longer timeout for AI summarization (120 seconds)
-            var arguments = [
-                "-p", prompt,
-                "--output-format", "json",
-                "--max-turns", "1"
-            ]
-            if let model = model, !model.isEmpty {
-                arguments.append(contentsOf: ["--model", model])
-            }
-            let output = try await shell.execute("claude", arguments: arguments, timeout: 120)
-
-            let duration = Date().timeIntervalSince(start)
-            await GitHubService.shared.addExternalLog(
-                command: "claude",
-                duration: duration,
-                success: true,
-                prompt: displayPrompt
-            )
-
-            // Parse the JSON response
-            guard let data = output.data(using: .utf8) else {
-                throw AIProviderError.invalidResponse
-            }
-
-            let response = try JSONDecoder().decode(ClaudeResponse.self, from: data)
-            return response.result
-        } catch let error as ShellError {
-            let duration = Date().timeIntervalSince(start)
-            await GitHubService.shared.addExternalLog(
-                command: "claude",
-                duration: duration,
-                success: false,
-                prompt: displayPrompt
-            )
-
-            switch error {
-            case .commandFailed(let output, _):
-                throw AIProviderError.executionFailed(output)
-            case .commandNotFound:
-                throw AIProviderError.notInstalled
-            case .timeout(let seconds):
-                throw AIProviderError.executionFailed("Request timed out after \(Int(seconds)) seconds")
-            }
-        } catch let error as AIProviderError {
-            throw error
-        } catch {
-            let duration = Date().timeIntervalSince(start)
-            await GitHubService.shared.addExternalLog(
-                command: "claude",
-                duration: duration,
-                success: false,
-                prompt: displayPrompt
-            )
-            throw AIProviderError.executionFailed(error.localizedDescription)
-        }
+        return try await executeCopilotPrompt(
+            prompt: prompt,
+            model: model,
+            displayPrompt: "Summarize \(weekLabel) (\(commits.count) commits)"
+        )
     }
 
     // MARK: - Enriched Commit Summarization
 
-    /// Summarize a week using enriched commits with diffs
     func summarizeWeekEnriched(
         commits: [EnrichedCommit],
         weekLabel: String,
@@ -181,10 +126,8 @@ actor ClaudeProvider: AIProvider {
         let batches = CommitBatcher.createBatches(from: commits)
 
         if batches.count == 1 {
-            // Single batch - direct summarization
             return try await summarizeBatch(commits: batches[0], weekLabel: weekLabel, model: model, isFinalSummary: true)
         } else {
-            // Multiple batches - summarize each, then combine
             var batchSummaries: [String] = []
 
             for (index, batch) in batches.enumerated() {
@@ -193,19 +136,16 @@ actor ClaudeProvider: AIProvider {
                 batchSummaries.append(summary)
             }
 
-            // Combine all batch summaries into final summary
             return try await combineSummaries(batchSummaries, weekLabel: weekLabel, model: model)
         }
     }
 
-    /// Summarize a single batch of commits
     private func summarizeBatch(
         commits: [EnrichedCommit],
         weekLabel: String,
         model: String?,
         isFinalSummary: Bool
     ) async throws -> String {
-        // Build the detailed commit list for the prompt
         let commitList = commits.map { enriched -> String in
             let commit = enriched.commit
             var entry = """
@@ -257,24 +197,25 @@ actor ClaudeProvider: AIProvider {
         Do not include commit SHAs. Analyze the diffs to provide meaningful summaries.
         """
 
-        return try await executeClaudePrompt(prompt: prompt, model: model, displayPrompt: "Summarize \(weekLabel) (\(commits.count) commits with diffs)")
+        return try await executeCopilotPrompt(
+            prompt: prompt,
+            model: model,
+            displayPrompt: "Summarize \(weekLabel) (\(commits.count) commits with diffs)"
+        )
     }
 
-    /// Summarize a huge commit by chunking its diff into manageable pieces
     func summarizeHugeCommit(_ commit: EnrichedCommit, model: String?) async throws -> String {
         guard let diff = commit.diff else {
             return commit.commit.message
         }
 
-        let chunkSize = 200_000  // ~50K tokens per chunk
+        let chunkSize = 200_000
         let chunks = diff.chunked(into: chunkSize)
 
         if chunks.count == 1 {
-            // Not actually huge, just return it
             return diff
         }
 
-        // Summarize each chunk
         var chunkSummaries: [String] = []
         for (index, chunk) in chunks.enumerated() {
             let prompt = """
@@ -288,7 +229,7 @@ actor ClaudeProvider: AIProvider {
             Focus on WHAT changed (files, functions, features), not line-by-line details.
             """
 
-            let summary = try await executeClaudePrompt(
+            let summary = try await executeCopilotPrompt(
                 prompt: prompt,
                 model: model,
                 displayPrompt: "Chunk \(index + 1)/\(chunks.count) of \(commit.commit.shortSha)"
@@ -296,12 +237,9 @@ actor ClaudeProvider: AIProvider {
             chunkSummaries.append(summary)
         }
 
-        // Combine chunk summaries
-        let combined = chunkSummaries.joined(separator: "\n\n")
-        return combined
+        return chunkSummaries.joined(separator: "\n\n")
     }
 
-    /// Combine multiple batch summaries into a final weekly summary
     private func combineSummaries(_ summaries: [String], weekLabel: String, model: String?) async throws -> String {
         let combinedInput = summaries.enumerated().map { index, summary in
             """
@@ -323,43 +261,40 @@ actor ClaudeProvider: AIProvider {
         - Keep bullets concise (1-2 lines each)
         """
 
-        return try await executeClaudePrompt(prompt: prompt, model: model, displayPrompt: "Combine \(summaries.count) batch summaries")
+        return try await executeCopilotPrompt(
+            prompt: prompt,
+            model: model,
+            displayPrompt: "Combine \(summaries.count) batch summaries"
+        )
     }
 
-    /// Execute a Claude prompt and return the result
-    private func executeClaudePrompt(prompt: String, model: String?, displayPrompt: String) async throws -> String {
+    /// Execute a Copilot prompt and return the result
+    private func executeCopilotPrompt(prompt: String, model: String?, displayPrompt: String) async throws -> String {
         let start = Date()
 
         do {
-            var arguments = [
-                "-p", prompt,
-                "--output-format", "json",
-                "--max-turns", "1"
-            ]
+            var arguments = ["-p", prompt]
             if let model = model, !model.isEmpty {
                 arguments.append(contentsOf: ["--model", model])
             }
-            let output = try await shell.execute("claude", arguments: arguments, timeout: summarizationTimeout)
+            arguments.append("--no-open-editor")
+
+            let output = try await shell.execute("copilot", arguments: arguments, timeout: summarizationTimeout)
 
             let duration = Date().timeIntervalSince(start)
             await GitHubService.shared.addExternalLog(
-                command: "claude",
+                command: "copilot",
                 duration: duration,
                 success: true,
                 prompt: displayPrompt
             )
 
-            // Parse the JSON response
-            guard let data = output.data(using: .utf8) else {
-                throw AIProviderError.invalidResponse
-            }
-
-            let response = try JSONDecoder().decode(ClaudeResponse.self, from: data)
-            return response.result
+            // Copilot returns plain text, not JSON
+            return output.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch let error as ShellError {
             let duration = Date().timeIntervalSince(start)
             await GitHubService.shared.addExternalLog(
-                command: "claude",
+                command: "copilot",
                 duration: duration,
                 success: false,
                 prompt: displayPrompt
@@ -378,7 +313,7 @@ actor ClaudeProvider: AIProvider {
         } catch {
             let duration = Date().timeIntervalSince(start)
             await GitHubService.shared.addExternalLog(
-                command: "claude",
+                command: "copilot",
                 duration: duration,
                 success: false,
                 prompt: displayPrompt
@@ -386,34 +321,87 @@ actor ClaudeProvider: AIProvider {
             throw AIProviderError.executionFailed(error.localizedDescription)
         }
     }
-}
 
-// MARK: - Claude Response Models
+    // MARK: - Model Discovery
 
-private struct ClaudeResponse: Codable {
-    let result: String
-    let costUsd: Double?
-    let sessionId: String?
+    /// Fetch available models by running copilot with an invalid model name
+    static func fetchAvailableModels() async -> [String] {
+        if let cached = cachedModels {
+            return cached
+        }
 
-    enum CodingKeys: String, CodingKey {
-        case result
-        case costUsd = "cost_usd"
-        case sessionId = "session_id"
+        let shell = ShellExecutor.shared
+
+        do {
+            // Run with an intentionally invalid model to get the error listing available models
+            _ = try await shell.execute("copilot", arguments: [
+                "-p", "test",
+                "--model", "___invalid_model_to_list_available___"
+            ], timeout: 30)
+            // If it succeeds somehow, return empty
+            return []
+        } catch let error as ShellError {
+            if case .commandFailed(let output, _) = error {
+                // Parse the error message to extract model names
+                let models = parseModelsFromError(output)
+                if !models.isEmpty {
+                    cachedModels = models
+                    return models
+                }
+            }
+        } catch {
+            // Ignore other errors
+        }
+
+        return []
+    }
+
+    /// Parse model names from copilot error output
+    private static func parseModelsFromError(_ output: String) -> [String] {
+        // Copilot typically lists models in the error like:
+        // "Available models: gpt-4, gpt-3.5-turbo, claude-3-opus, ..."
+        // or line by line. Try to extract them.
+
+        var models: [String] = []
+
+        // Try to find "Available models:" or similar pattern
+        let lines = output.components(separatedBy: .newlines)
+        for line in lines {
+            let lowercased = line.lowercased()
+            if lowercased.contains("available") || lowercased.contains("model") {
+                // Look for model names (alphanumeric with dashes/dots)
+                let pattern = #"[a-zA-Z0-9][-a-zA-Z0-9._]*[a-zA-Z0-9]"#
+                if let regex = try? NSRegularExpression(pattern: pattern) {
+                    let range = NSRange(line.startIndex..., in: line)
+                    let matches = regex.matches(in: line, range: range)
+                    for match in matches {
+                        if let matchRange = Range(match.range, in: line) {
+                            let model = String(line[matchRange])
+                            // Filter out common non-model words
+                            let excludeWords = ["available", "models", "model", "error", "invalid", "the", "are"]
+                            if !excludeWords.contains(model.lowercased()) && model.count > 2 {
+                                models.append(model)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return models.uniqued()
+    }
+
+    /// Clear cached models to force re-fetch
+    static func clearModelCache() {
+        cachedModels = nil
     }
 }
 
-// MARK: - String Chunking Extension
+// MARK: - Array Extension for Unique Elements
 
-extension String {
-    func chunked(into size: Int) -> [String] {
-        guard size > 0, count > size else { return [self] }
-        var chunks: [String] = []
-        var start = startIndex
-        while start < endIndex {
-            let end = index(start, offsetBy: size, limitedBy: endIndex) ?? endIndex
-            chunks.append(String(self[start..<end]))
-            start = end
-        }
-        return chunks
+private extension Array where Element: Hashable {
+    func uniqued() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
     }
 }

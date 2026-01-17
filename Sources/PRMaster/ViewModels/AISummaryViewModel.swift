@@ -61,13 +61,25 @@ class AISummaryViewModel: ObservableObject {
         }
     }
 
+    /// Get the selected provider type from settings
+    private var selectedProviderType: AIProviderType {
+        let rawValue = UserDefaults.standard.string(forKey: "aiProvider") ?? AIProviderType.claude.rawValue
+        return AIProviderType(rawValue: rawValue) ?? .claude
+    }
+
+    /// Get the selected model from settings
+    private var selectedModel: String? {
+        let model = UserDefaults.standard.string(forKey: "aiModel")
+        return model?.isEmpty == true ? nil : model
+    }
+
     /// Check provider status only once (cached)
     func checkProviderStatusIfNeeded() async {
         guard !hasCheckedProvider else { return }
         hasCheckedProvider = true
         isCheckingProvider = true
 
-        let provider = AIProviderType.claude.createProvider()
+        let provider = selectedProviderType.createProvider()
         providerStatus = await provider.checkAvailability()
 
         isCheckingProvider = false
@@ -254,8 +266,10 @@ class AISummaryViewModel: ObservableObject {
 
             if Task.isCancelled { return }
 
-            // Get the AI provider
-            let provider = AIProviderType.claude.createProvider()
+            // Get the AI provider and model
+            let providerType = await MainActor.run { self.selectedProviderType }
+            let model = await MainActor.run { self.selectedModel }
+            let provider = providerType.createProvider()
 
             // Process each week: fetch commits, then summarize
             let summaryCount = await MainActor.run { self.weeklySummaries.count }
@@ -322,14 +336,13 @@ class AISummaryViewModel: ObservableObject {
                         }
 
                         // Pre-process huge commits by chunking and summarizing their diffs
-                        let claudeProvider = provider as! ClaudeProvider
                         var processedCommits: [EnrichedCommit] = []
                         for enriched in enrichedCommits {
                             if enriched.sizeCategory == .huge {
                                 await MainActor.run {
                                     self.statusMessage = "Summarizing large diff for \(enriched.commit.shortSha)..."
                                 }
-                                let summary = try await claudeProvider.summarizeHugeCommit(enriched)
+                                let summary = try await provider.summarizeHugeCommit(enriched, model: model)
                                 // Create new EnrichedCommit with summary instead of full diff
                                 processedCommits.append(EnrichedCommit(commit: enriched.commit, diff: summary))
                             } else {
@@ -348,7 +361,7 @@ class AISummaryViewModel: ObservableObject {
                             }
                         }
 
-                        let result = try await claudeProvider.summarizeWeekEnriched(commits: enrichedCommits, weekLabel: weekLabel)
+                        let result = try await provider.summarizeWeekEnriched(commits: enrichedCommits, weekLabel: weekLabel, model: model)
 
                         if !Task.isCancelled {
                             await MainActor.run {
@@ -407,10 +420,13 @@ class AISummaryViewModel: ObservableObject {
                     self.statusMessage = "Summarizing \(weekLabel)..."
                 }
 
-                let provider = ClaudeProvider()
+                let providerType = await MainActor.run { self.selectedProviderType }
+                let model = await MainActor.run { self.selectedModel }
+                let provider = providerType.createProvider()
                 let result = try await provider.summarizeWeekEnriched(
                     commits: enrichedCommits,
-                    weekLabel: weekLabel
+                    weekLabel: weekLabel,
+                    model: model
                 )
                 await MainActor.run {
                     self.weeklySummaries[index].status = .completed(result)
