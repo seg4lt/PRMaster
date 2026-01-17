@@ -22,12 +22,18 @@ struct DateRangeCommits: Identifiable {
     let startDate: Date
     let endDate: Date
     let commits: [Commit]
+    private let cachedCommitCount: Int?
 
-    init(id: UUID = UUID(), startDate: Date, endDate: Date, commits: [Commit]) {
+    init(id: UUID = UUID(), startDate: Date, endDate: Date, commits: [Commit], cachedCommitCount: Int? = nil) {
         self.id = id
         self.startDate = startDate
         self.endDate = endDate
         self.commits = commits
+        self.cachedCommitCount = cachedCommitCount
+    }
+
+    var commitCount: Int {
+        cachedCommitCount ?? commits.count
     }
 
     var dateLabel: String {

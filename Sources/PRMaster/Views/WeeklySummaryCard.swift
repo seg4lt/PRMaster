@@ -28,7 +28,7 @@ struct SummaryCard: View {
                 Text(summary.dateRange.dateLabel)
                     .font(.headline)
 
-                Text("\(summary.dateRange.commits.count) commits")
+                Text("\(summary.dateRange.commitCount) commits")
                     .font(.caption)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)

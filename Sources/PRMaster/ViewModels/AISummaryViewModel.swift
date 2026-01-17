@@ -225,8 +225,9 @@ class AISummaryViewModel: ObservableObject {
             status: .pending
         )
 
-        // Append to existing summaries (newest first)
-        summaries.insert(newSummary, at: 0)
+        // Insert in sorted position (by startDate descending)
+        let insertIndex = summaries.firstIndex { $0.dateRange.startDate < rangeStart } ?? summaries.count
+        summaries.insert(newSummary, at: insertIndex)
 
         generationTask = Task.detached { [weak self] in
             guard let self = self else { return }
@@ -583,14 +584,14 @@ class AISummaryViewModel: ObservableObject {
                 startDate: summary.dateRange.startDate,
                 endDate: summary.dateRange.endDate,
                 dateLabel: summary.dateRange.dateLabel,
-                commitCount: summary.dateRange.commits.count,
+                commitCount: summary.dateRange.commitCount,
                 summaryText: text,
                 createdAt: summary.createdAt
             )
         }
 
-        // Sort by createdAt descending (newest first)
-        let sortedCache = cacheItems.sorted { $0.createdAt > $1.createdAt }
+        // Sort by startDate descending (newest date range first)
+        let sortedCache = cacheItems.sorted { $0.startDate > $1.startDate }
         if let data = try? JSONEncoder().encode(sortedCache) {
             UserDefaults.standard.set(data, forKey: "aiSummaryCache")
         }
@@ -602,13 +603,14 @@ class AISummaryViewModel: ObservableObject {
             return
         }
 
-        // Restore cached summaries (sorted by createdAt descending)
-        summaries = cached.sorted { $0.createdAt > $1.createdAt }.map { cache in
+        // Restore cached summaries (sorted by startDate descending)
+        summaries = cached.sorted { $0.startDate > $1.startDate }.map { cache in
             let dateRange = DateRangeCommits(
                 id: cache.id,
                 startDate: cache.startDate,
                 endDate: cache.endDate,
-                commits: [] // We don't cache commits, just the summary
+                commits: [],
+                cachedCommitCount: cache.commitCount
             )
             return DateRangeSummary(
                 id: cache.id,
