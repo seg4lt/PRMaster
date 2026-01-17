@@ -8,36 +8,18 @@ actor ClaudeProvider: AIProvider {
     private let shell = ShellExecutor.shared
 
     func checkAvailability() async -> AIProviderStatus {
-        // Check if claude CLI is installed
+        // Check if claude CLI is installed by running --version
+        // We don't run an actual prompt to check auth - that would be wasteful
+        // and can trigger unexpected permission dialogs. Auth errors will be
+        // caught when the user actually tries to generate summaries.
         do {
-            _ = try await shell.execute("claude", arguments: ["--version"])
+            let output = try await shell.execute("claude", arguments: ["--version"])
+            if output.contains("claude") {
+                return .available
+            }
+            return .notInstalled(message: "Claude Code not installed")
         } catch {
             return .notInstalled(message: "Claude Code not installed")
-        }
-
-        // Check if authenticated by running a simple command
-        do {
-            // Try to run a minimal prompt to verify authentication
-            _ = try await shell.execute("claude", arguments: [
-                "-p", "hi",
-                "--output-format", "json",
-                "--max-turns", "1"
-            ])
-            return .available
-        } catch let error as ShellError {
-            switch error {
-            case .commandFailed(let output, _):
-                if output.contains("not authenticated") ||
-                   output.contains("log in") ||
-                   output.contains("API key") {
-                    return .notAuthenticated(message: "Run 'claude login' to authenticate")
-                }
-                return .error("Claude CLI error: \(output.prefix(100))")
-            case .commandNotFound:
-                return .notInstalled(message: "Claude Code not installed")
-            }
-        } catch {
-            return .error("Unknown error: \(error.localizedDescription)")
         }
     }
 
