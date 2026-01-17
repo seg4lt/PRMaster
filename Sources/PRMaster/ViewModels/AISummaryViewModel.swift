@@ -55,121 +55,119 @@ class AISummaryViewModel: ObservableObject {
         generationTask = Task.detached { [weak self] in
             guard let self = self else { return }
 
-            do {
-                // Get current user
+            // Get current user
+            await MainActor.run {
+                self.statusMessage = "Fetching GitHub user..."
+            }
+
+            guard let currentUser = try? await GitHubService.shared.getCurrentUser() else {
                 await MainActor.run {
-                    self.statusMessage = "Fetching GitHub user..."
+                    self.error = "Could not get current user"
+                    self.isLoading = false
+                    self.statusMessage = nil
                 }
+                return
+            }
 
-                guard let currentUser = try? await GitHubService.shared.getCurrentUser() else {
-                    await MainActor.run {
-                        self.error = "Could not get current user"
-                        self.isLoading = false
-                        self.statusMessage = nil
-                    }
-                    return
+            // Parse repo filter and dates
+            let repos = await MainActor.run { self.parseRepoFilter() }
+            let startDate = await MainActor.run { self.startDate }
+            let endDate = await MainActor.run { self.endDate }
+
+            // Break date range into weeks FIRST (before fetching)
+            let weekRanges = await MainActor.run { self.generateWeekRanges(from: startDate, to: endDate) }
+
+            // Initialize all weeks as pending (with empty commits for now)
+            await MainActor.run {
+                self.weeklySummaries = weekRanges.map { range in
+                    let week = WeeklyCommits(
+                        weekStart: range.start,
+                        weekEnd: range.end,
+                        commits: []
+                    )
+                    return WeeklySummary(week: week, status: .pending)
                 }
+            }
 
-                // Parse repo filter
-                let repos = await MainActor.run { self.parseRepoFilter() }
-                let startDate = await MainActor.run { self.startDate }
-                let endDate = await MainActor.run { self.endDate }
+            if Task.isCancelled { return }
 
+            // Get the AI provider
+            let provider = AIProviderType.claude.createProvider()
+
+            // Process each week: fetch commits, then summarize
+            let summaryCount = await MainActor.run { self.weeklySummaries.count }
+            var totalCommits = 0
+
+            for index in 0..<summaryCount {
+                if Task.isCancelled { break }
+
+                let weekData = await MainActor.run { self.weeklySummaries[index].week }
+                let weekLabel = weekData.weekLabel
+
+                // Mark as loading and update status
                 await MainActor.run {
-                    self.statusMessage = "Fetching commits..."
+                    self.weeklySummaries[index].status = .loading
+                    self.statusMessage = "Fetching commits for \(weekLabel)..."
                 }
 
-                // Fetch commits
-                let commits = try await GitHubService.shared.fetchUserCommits(
-                    author: currentUser,
-                    startDate: startDate,
-                    endDate: endDate,
-                    repos: repos
-                )
+                do {
+                    // Fetch commits for this specific week
+                    let commits = try await GitHubService.shared.fetchUserCommits(
+                        author: currentUser,
+                        startDate: weekData.weekStart,
+                        endDate: weekData.weekEnd,
+                        repos: repos
+                    )
 
-                if Task.isCancelled { return }
-
-                guard !commits.isEmpty else {
-                    await MainActor.run {
-                        self.error = "No commits found in the selected date range"
-                        self.isLoading = false
-                        self.statusMessage = nil
-                    }
-                    return
-                }
-
-                await MainActor.run {
-                    self.statusMessage = "Found \(commits.count) commits, grouping by week..."
-                }
-
-                // Group commits by week
-                let weeklyCommits = await MainActor.run { self.groupCommitsByWeek(commits) }
-
-                // Initialize summaries with pending status
-                await MainActor.run {
-                    self.weeklySummaries = weeklyCommits.map { week in
-                        WeeklySummary(week: week, status: .pending)
-                    }
-                    self.statusMessage = "Generating summaries..."
-                }
-
-                // Get the AI provider
-                let provider = AIProviderType.claude.createProvider()
-
-                // Launch all summary tasks concurrently (detached for parallelism)
-                let summaryCount = await MainActor.run { self.weeklySummaries.count }
-                var tasks: [Int: Task<String, Error>] = [:]
-
-                for index in 0..<summaryCount {
-                    let weekData = await MainActor.run { self.weeklySummaries[index].week }
-                    let commits = weekData.commits
-                    let weekLabel = weekData.weekLabel
-                    tasks[index] = Task.detached {
-                        try await provider.summarizeWeek(commits: commits, weekLabel: weekLabel)
-                    }
-                }
-
-                // Process results in order for streaming display
-                for index in 0..<summaryCount {
                     if Task.isCancelled { break }
 
-                    // Mark current as loading
+                    // Update the week with actual commits
                     await MainActor.run {
-                        self.weeklySummaries[index].status = .loading
+                        self.weeklySummaries[index].week = WeeklyCommits(
+                            weekStart: weekData.weekStart,
+                            weekEnd: weekData.weekEnd,
+                            commits: commits
+                        )
                     }
 
-                    // Await the pre-launched task
-                    if let task = tasks[index] {
-                        do {
-                            let result = try await task.value
-                            if !Task.isCancelled {
-                                await MainActor.run {
-                                    self.weeklySummaries[index].status = .completed(result)
-                                }
-                            }
-                        } catch {
-                            if !Task.isCancelled {
-                                await MainActor.run {
-                                    self.weeklySummaries[index].status = .error(error.localizedDescription)
-                                }
+                    totalCommits += commits.count
+
+                    if commits.isEmpty {
+                        // No commits this week
+                        await MainActor.run {
+                            self.weeklySummaries[index].status = .completed("No commits this week.")
+                        }
+                    } else {
+                        // Summarize this week
+                        await MainActor.run {
+                            self.statusMessage = "Summarizing \(weekLabel) (\(commits.count) commits)..."
+                        }
+
+                        let result = try await provider.summarizeWeek(commits: commits, weekLabel: weekLabel)
+
+                        if !Task.isCancelled {
+                            await MainActor.run {
+                                self.weeklySummaries[index].status = .completed(result)
                             }
                         }
                     }
-                }
-
-                await MainActor.run {
-                    self.isLoading = false
-                    self.statusMessage = nil
-                    self.saveCachedSummaries()
-                }
-            } catch {
-                if !Task.isCancelled {
-                    await MainActor.run {
-                        self.error = error.localizedDescription
-                        self.isLoading = false
-                        self.statusMessage = nil
+                } catch {
+                    if !Task.isCancelled {
+                        await MainActor.run {
+                            self.weeklySummaries[index].status = .error(error.localizedDescription)
+                        }
                     }
                 }
+            }
+
+            let finalTotalCommits = totalCommits
+            await MainActor.run {
+                self.isLoading = false
+                self.statusMessage = nil
+                if finalTotalCommits == 0 {
+                    self.error = "No commits found in the selected date range"
+                }
+                self.saveCachedSummaries()
             }
         }
     }
@@ -234,28 +232,30 @@ class AISummaryViewModel: ObservableObject {
             .filter { !$0.isEmpty }
     }
 
-    private func groupCommitsByWeek(_ commits: [Commit]) -> [WeeklyCommits] {
+    private func generateWeekRanges(from startDate: Date, to endDate: Date) -> [(start: Date, end: Date)] {
         let calendar = Calendar.current
+        var ranges: [(start: Date, end: Date)] = []
 
-        // Group by week start (Sunday)
-        var weekGroups: [Date: [Commit]] = [:]
+        // Find the start of the week containing startDate
+        var currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: startDate)?.start ?? startDate
 
-        for commit in commits {
-            // Get the start of the week (Sunday)
-            let weekStart = calendar.dateInterval(of: .weekOfYear, for: commit.authorDate)?.start ?? commit.authorDate
-            weekGroups[weekStart, default: []].append(commit)
+        while currentWeekStart <= endDate {
+            let weekEnd = calendar.date(byAdding: .day, value: 6, to: currentWeekStart) ?? currentWeekStart
+
+            // Clamp to the user's selected date range
+            let effectiveStart = max(currentWeekStart, startDate)
+            let effectiveEnd = min(weekEnd, endDate)
+
+            ranges.append((start: effectiveStart, end: effectiveEnd))
+
+            // Move to next week
+            guard let nextWeek = calendar.date(byAdding: .weekOfYear, value: 1, to: currentWeekStart) else { break }
+            currentWeekStart = nextWeek
         }
 
-        // Convert to WeeklyCommits and sort by date ascending (oldest first)
-        return weekGroups.keys.sorted().map { weekStart in
-            let weekEnd = calendar.date(byAdding: .day, value: 6, to: weekStart) ?? weekStart
-            return WeeklyCommits(
-                weekStart: weekStart,
-                weekEnd: weekEnd,
-                commits: weekGroups[weekStart] ?? []
-            )
-        }
+        return ranges
     }
+
 
     // MARK: - Caching
 

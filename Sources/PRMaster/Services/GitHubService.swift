@@ -398,7 +398,11 @@ actor GitHubService {
             query += " \(repoQueries)"
         }
 
-        let command = "search commits"
+        // Format date range for display in logs
+        let displayFormatter = DateFormatter()
+        displayFormatter.dateFormat = "MMM d"
+        let displayRange = "\(displayFormatter.string(from: startDate)) - \(displayFormatter.string(from: endDate))"
+        let command = "search commits: \(displayRange)"
 
         do {
             let json = try await withRetry {

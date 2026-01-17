@@ -56,7 +56,7 @@ enum SummaryStatus: Equatable {
 }
 
 struct WeeklySummary: Identifiable {
-    let week: WeeklyCommits
+    var week: WeeklyCommits
     var status: SummaryStatus
 
     var id: String { week.id }
