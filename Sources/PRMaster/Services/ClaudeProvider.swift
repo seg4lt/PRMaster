@@ -9,18 +9,57 @@ actor ClaudeProvider: AIProvider {
 
     func checkAvailability() async -> AIProviderStatus {
         // Check if claude CLI is installed by running --version
-        // We don't run an actual prompt to check auth - that would be wasteful
-        // and can trigger unexpected permission dialogs. Auth errors will be
-        // caught when the user actually tries to generate summaries.
+        let start = Date()
+
         do {
             let output = try await shell.execute("claude", arguments: ["--version"])
+            let duration = Date().timeIntervalSince(start)
+
+            await GitHubService.shared.addExternalLog(
+                command: "claude --version",
+                duration: duration,
+                success: true,
+                prompt: nil
+            )
+
             // Output is like "2.1.12 (Claude Code)" - just check it's not empty
             if !output.isEmpty {
                 return .available
             }
             return .notInstalled(message: "Claude Code not installed")
+        } catch let error as ShellError {
+            let duration = Date().timeIntervalSince(start)
+
+            switch error {
+            case .commandNotFound(let cmd):
+                await GitHubService.shared.addExternalLog(
+                    command: "claude --version",
+                    duration: duration,
+                    success: false,
+                    prompt: "Command not found: \(cmd)"
+                )
+                return .notInstalled(message: "Claude Code not found in PATH")
+
+            case .commandFailed(let output, let code):
+                await GitHubService.shared.addExternalLog(
+                    command: "claude --version",
+                    duration: duration,
+                    success: false,
+                    prompt: "Exit code \(code)"
+                )
+                // Surface the actual error
+                let truncatedOutput = output.prefix(200)
+                return .error("Exit \(code): \(truncatedOutput)")
+            }
         } catch {
-            return .notInstalled(message: "Claude Code not installed")
+            let duration = Date().timeIntervalSince(start)
+            await GitHubService.shared.addExternalLog(
+                command: "claude --version",
+                duration: duration,
+                success: false,
+                prompt: error.localizedDescription
+            )
+            return .error(error.localizedDescription)
         }
     }
 
