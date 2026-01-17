@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-struct SummaryCard: View {
+struct CommitSummaryCard: View {
     let summary: DateRangeSummary
     let availableRepos: [String]
     let onRetry: () -> Void
@@ -110,25 +110,7 @@ struct SummaryCard: View {
             Text("Update Summary")
                 .font(.headline)
 
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Start")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    DatePicker("", selection: $newStartDate, displayedComponents: .date)
-                        .labelsHidden()
-                        .datePickerStyle(.compact)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("End")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    DatePicker("", selection: $newEndDate, displayedComponents: .date)
-                        .labelsHidden()
-                        .datePickerStyle(.compact)
-                }
-            }
+            DateRangePicker(startDate: $newStartDate, endDate: $newEndDate)
 
             RepoListPicker(
                 availableRepos: availableRepos,

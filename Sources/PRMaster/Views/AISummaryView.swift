@@ -48,21 +48,10 @@ struct AISummaryView: View {
 
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Start Date")
+                    Text("Date Range")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    DatePicker("", selection: $viewModel.startDate, displayedComponents: .date)
-                        .labelsHidden()
-                        .datePickerStyle(.compact)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("End Date")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    DatePicker("", selection: $viewModel.endDate, displayedComponents: .date)
-                        .labelsHidden()
-                        .datePickerStyle(.compact)
+                    DateRangePicker(startDate: $viewModel.startDate, endDate: $viewModel.endDate)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -191,7 +180,7 @@ struct AISummaryView: View {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(Array(viewModel.summaries.enumerated()), id: \.element.id) { index, summary in
-                            SummaryCard(
+                            CommitSummaryCard(
                                 summary: summary,
                                 availableRepos: viewModel.availableRepos,
                                 onRetry: {
