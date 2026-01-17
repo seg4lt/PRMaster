@@ -3,6 +3,7 @@ import SwiftUI
 struct AISummaryView: View {
     @ObservedObject private var viewModel = AISummaryViewModel.shared
     @State private var isRepoPickerExpanded = false
+    @State private var copiedAll = false
 
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -99,6 +100,14 @@ struct AISummaryView: View {
                     }
                     .buttonStyle(.bordered)
                 } else if !viewModel.weeklySummaries.isEmpty {
+                    Button {
+                        copyAllSummaries()
+                    } label: {
+                        Image(systemName: copiedAll ? "checkmark" : "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Copy all summaries")
+
                     Button {
                         viewModel.clearCache()
                     } label: {
@@ -227,4 +236,18 @@ struct AISummaryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func copyAllSummaries() {
+        let allText = viewModel.weeklySummaries.compactMap { summary -> String? in
+            guard case .completed(let text) = summary.status else { return nil }
+            return text
+        }.joined(separator: "\n\n")
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(allText, forType: .string)
+
+        copiedAll = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            copiedAll = false
+        }
+    }
 }
