@@ -113,6 +113,9 @@ actor CopilotProvider: AIProvider {
 
     // MARK: - Enriched Commit Summarization
 
+    /// Max tokens for Copilot (64K limit, leave room for prompt overhead)
+    private static let maxTokensPerCall = 40_000
+
     func summarizeWeekEnriched(
         commits: [EnrichedCommit],
         weekLabel: String,
@@ -122,8 +125,8 @@ actor CopilotProvider: AIProvider {
             return "No commits this week."
         }
 
-        // Create batches based on token limits
-        let batches = CommitBatcher.createBatches(from: commits)
+        // Create smaller batches for Copilot's 64K token limit
+        let batches = createCopilotBatches(from: commits)
 
         if batches.count == 1 {
             return try await summarizeBatch(commits: batches[0], weekLabel: weekLabel, model: model, isFinalSummary: true)
@@ -140,6 +143,50 @@ actor CopilotProvider: AIProvider {
         }
     }
 
+    /// Create smaller batches for Copilot's token limit
+    private func createCopilotBatches(from commits: [EnrichedCommit]) -> [[EnrichedCommit]] {
+        guard !commits.isEmpty else { return [] }
+
+        let sorted = commits.sorted { $0.estimatedTokens < $1.estimatedTokens }
+
+        var batches: [[EnrichedCommit]] = []
+        var currentBatch: [EnrichedCommit] = []
+        var currentTokens = 0
+
+        for commit in sorted {
+            let tokens = commit.estimatedTokens
+
+            // Huge commits get their own batch
+            if commit.sizeCategory == .huge || commit.sizeCategory == .large {
+                if !currentBatch.isEmpty {
+                    batches.append(currentBatch)
+                    currentBatch = []
+                    currentTokens = 0
+                }
+                batches.append([commit])
+            } else if currentTokens + tokens > Self.maxTokensPerCall || currentBatch.count >= 15 {
+                // Start new batch if would exceed limit or too many commits
+                if !currentBatch.isEmpty {
+                    batches.append(currentBatch)
+                }
+                currentBatch = [commit]
+                currentTokens = tokens
+            } else {
+                currentBatch.append(commit)
+                currentTokens += tokens
+            }
+        }
+
+        if !currentBatch.isEmpty {
+            batches.append(currentBatch)
+        }
+
+        return batches
+    }
+
+    /// Max chars per diff to avoid token overflow (~40K chars ≈ 10K tokens)
+    private static let maxDiffChars = 40_000
+
     private func summarizeBatch(
         commits: [EnrichedCommit],
         weekLabel: String,
@@ -154,7 +201,11 @@ actor CopilotProvider: AIProvider {
             \(commit.message)
             """
 
-            if let diff = enriched.diff {
+            if var diff = enriched.diff {
+                // Truncate large diffs to fit Copilot's token limit
+                if diff.count > Self.maxDiffChars {
+                    diff = String(diff.prefix(Self.maxDiffChars)) + "\n... [truncated]"
+                }
                 entry += """
 
                 **Diff:**
@@ -209,7 +260,8 @@ actor CopilotProvider: AIProvider {
             return commit.commit.message
         }
 
-        let chunkSize = 200_000
+        // Copilot has 64K token limit, use ~80K chars (~20K tokens) to leave room for prompt
+        let chunkSize = 80_000
         let chunks = diff.chunked(into: chunkSize)
 
         if chunks.count == 1 {
