@@ -425,22 +425,21 @@ class AISummaryViewModel: ObservableObject {
     // MARK: - Private Helpers
 
     private func generateWeekRanges(from startDate: Date, to endDate: Date) -> [(start: Date, end: Date)] {
-        let calendar = Calendar.current
+        var calendar = Calendar(identifier: .iso8601)
+        calendar.firstWeekday = 2  // Monday = 2
         var ranges: [(start: Date, end: Date)] = []
 
-        // Find the start of the week containing startDate
+        // Find Monday of the week containing startDate
         var currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: startDate)?.start ?? startDate
 
         while currentWeekStart <= endDate {
-            let weekEnd = calendar.date(byAdding: .day, value: 6, to: currentWeekStart) ?? currentWeekStart
+            // Week ends Sunday at 23:59:59
+            let weekEnd = calendar.date(byAdding: .day, value: 6, to: currentWeekStart)!
+            let weekEndMidnight = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: weekEnd)!
 
-            // Clamp to the user's selected date range
-            let effectiveStart = max(currentWeekStart, startDate)
-            let effectiveEnd = min(weekEnd, endDate)
+            ranges.append((start: currentWeekStart, end: weekEndMidnight))
 
-            ranges.append((start: effectiveStart, end: effectiveEnd))
-
-            // Move to next week
+            // Move to next Monday
             guard let nextWeek = calendar.date(byAdding: .weekOfYear, value: 1, to: currentWeekStart) else { break }
             currentWeekStart = nextWeek
         }
