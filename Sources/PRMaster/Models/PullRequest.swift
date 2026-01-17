@@ -119,6 +119,15 @@ struct DynamicCodingKey: CodingKey {
     }
 }
 
+struct ChangedFileNodes: Codable {
+    let nodes: [ChangedFile]
+}
+
+struct ChangedFile: Codable, Identifiable {
+    let path: String
+    var id: String { path }
+}
+
 struct PRDetail: Codable {
     let headRefName: String?
     let baseRefName: String?
@@ -131,6 +140,7 @@ struct PRDetail: Codable {
     let mergeable: String?
     let mergeStateStatus: String?
     let commits: CommitNodes?
+    let files: ChangedFileNodes?
 
     var statusCheckRollup: StatusCheckRollup? {
         commits?.nodes.first?.commit.statusCheckRollup

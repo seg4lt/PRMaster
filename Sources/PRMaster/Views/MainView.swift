@@ -262,7 +262,10 @@ struct MainView: View {
 
         // Apply saved filter if selected (single select)
         if let savedFilter = selectedSavedFilter {
-            filtered = filtered.filter { savedFilter.matches(pr: $0.pr) }
+            filtered = filtered.filter { enrichedPR in
+                let filePaths = enrichedPR.detail?.files?.nodes.map { $0.path } ?? []
+                return savedFilter.matches(pr: enrichedPR.pr, filePaths: filePaths)
+            }
         }
 
         // Apply author filters (multi-select)

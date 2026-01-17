@@ -243,6 +243,15 @@ struct FilterRowView: View {
                 .font(.caption)
             }
 
+            if !filter.filePatterns.isEmpty {
+                HStack {
+                    Text("Files:")
+                        .foregroundStyle(.secondary)
+                    Text(filter.filePatterns.joined(separator: ", "))
+                }
+                .font(.caption)
+            }
+
             HStack {
                 Text("Action:")
                     .foregroundStyle(.secondary)
@@ -265,6 +274,7 @@ struct FilterEditorView: View {
     @State private var authorsText: String = ""
     @State private var reposText: String = ""
     @State private var titlePattern: String = ""
+    @State private var filePatternsText: String = ""
     @State private var action: NotificationAction = .soundAndBanner
 
     init(filter: NotificationFilter?, onSave: @escaping (NotificationFilter) -> Void, onCancel: @escaping () -> Void) {
@@ -277,6 +287,7 @@ struct FilterEditorView: View {
             _authorsText = State(initialValue: filter.authors.joined(separator: ", "))
             _reposText = State(initialValue: filter.repositories.joined(separator: ", "))
             _titlePattern = State(initialValue: filter.titlePattern ?? "")
+            _filePatternsText = State(initialValue: filter.filePatterns.joined(separator: ", "))
             _action = State(initialValue: filter.notificationAction)
         }
     }
@@ -341,6 +352,17 @@ struct FilterEditorView: View {
                         TextField("e.g., org/repo1, org/repo2", text: $reposText)
                             .textFieldStyle(.roundedBorder)
                         Text("Leave empty to match all repos")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("File Patterns (comma-separated, wildcards supported)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("e.g., src/api/*, *.swift, tests/**/*", text: $filePatternsText)
+                            .textFieldStyle(.roundedBorder)
+                        Text("Use * for single directory, ** for any depth")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
@@ -411,11 +433,17 @@ struct FilterEditorView: View {
             .map { String($0.trimmingCharacters(in: .whitespaces)) }
             .filter { !$0.isEmpty }
 
+        let filePatterns = filePatternsText
+            .split(separator: ",")
+            .map { String($0.trimmingCharacters(in: .whitespaces)) }
+            .filter { !$0.isEmpty }
+
         if let existingFilter = filter {
             existingFilter.name = name
             existingFilter.authors = authors
             existingFilter.repositories = repos
             existingFilter.titlePattern = titlePattern.isEmpty ? nil : titlePattern
+            existingFilter.filePatterns = filePatterns
             existingFilter.notificationAction = action
             onSave(existingFilter)
         } else {
@@ -424,6 +452,7 @@ struct FilterEditorView: View {
                 authors: authors,
                 repositories: repos,
                 titlePattern: titlePattern.isEmpty ? nil : titlePattern,
+                filePatterns: filePatterns,
                 action: action
             )
             onSave(newFilter)

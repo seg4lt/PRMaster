@@ -262,8 +262,9 @@ class PRListViewModel: ObservableObject {
             if let reason = await cache.checkAndUpdateNotificationState(pr: pr) {
                 // If only filter notifications, check if PR matches any enabled filter
                 if onlyFilterNotifications {
+                    let filePaths = pr.detail?.files?.nodes.map { $0.path } ?? []
                     let matchesFilter = filters.contains { filter in
-                        filter.isEnabled && filter.matches(pr: pr.pr)
+                        filter.isEnabled && filter.matches(pr: pr.pr, filePaths: filePaths)
                     }
                     if matchesFilter {
                         await sendNotification(for: pr, reason: reason, matchedFilter: true)

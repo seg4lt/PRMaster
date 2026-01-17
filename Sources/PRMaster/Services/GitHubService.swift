@@ -228,6 +228,11 @@ actor GitHubService {
                   }
                 }
               }
+              files(first: 100) {
+                nodes {
+                  path
+                }
+              }
         """
 
         let prQueries = numbers.map { number in

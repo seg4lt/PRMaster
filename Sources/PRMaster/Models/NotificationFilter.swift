@@ -33,6 +33,7 @@ final class NotificationFilter {
     var authors: [String]
     var repositories: [String]
     var titlePattern: String?
+    var filePatterns: [String]
     var action: String
     var isEnabled: Bool
     var createdAt: Date
@@ -42,6 +43,7 @@ final class NotificationFilter {
         authors: [String] = [],
         repositories: [String] = [],
         titlePattern: String? = nil,
+        filePatterns: [String] = [],
         action: NotificationAction = .soundAndBanner,
         isEnabled: Bool = true
     ) {
@@ -50,6 +52,7 @@ final class NotificationFilter {
         self.authors = authors
         self.repositories = repositories
         self.titlePattern = titlePattern
+        self.filePatterns = filePatterns
         self.action = action.rawValue
         self.isEnabled = isEnabled
         self.createdAt = Date()
@@ -60,7 +63,7 @@ final class NotificationFilter {
         set { action = newValue.rawValue }
     }
 
-    func matches(pr: PullRequest) -> Bool {
+    func matches(pr: PullRequest, filePaths: [String] = []) -> Bool {
         if !isEnabled { return false }
 
         if !authors.isEmpty {
@@ -87,6 +90,29 @@ final class NotificationFilter {
             }
         }
 
+        if !filePatterns.isEmpty {
+            let matchesAnyPattern = filePaths.contains { path in
+                filePatterns.contains { pattern in
+                    globMatch(path: path, pattern: pattern)
+                }
+            }
+            if !matchesAnyPattern { return false }
+        }
+
         return true
+    }
+
+    private func globMatch(path: String, pattern: String) -> Bool {
+        let regexPattern = "^" + NSRegularExpression.escapedPattern(for: pattern)
+            .replacingOccurrences(of: "\\*\\*", with: "<<<DOUBLESTAR>>>")
+            .replacingOccurrences(of: "\\*", with: "[^/]*")
+            .replacingOccurrences(of: "<<<DOUBLESTAR>>>", with: ".*")
+            .replacingOccurrences(of: "\\?", with: ".") + "$"
+
+        guard let regex = try? NSRegularExpression(pattern: regexPattern, options: .caseInsensitive) else {
+            return false
+        }
+        let range = NSRange(path.startIndex..., in: path)
+        return regex.firstMatch(in: path, options: [], range: range) != nil
     }
 }

@@ -244,7 +244,10 @@ struct MenuBarLabel: View {
             let filterIdStr = String(source.dropFirst(7))
             if let filterId = UUID(uuidString: filterIdStr),
                let filter = savedFilters.first(where: { $0.id == filterId }) {
-                return viewModel.toReviewPRs.filter { filter.matches(pr: $0.pr) }.count
+                return viewModel.toReviewPRs.filter { enrichedPR in
+                    let filePaths = enrichedPR.detail?.files?.nodes.map { $0.path } ?? []
+                    return filter.matches(pr: enrichedPR.pr, filePaths: filePaths)
+                }.count
             }
         }
         return 0
