@@ -113,8 +113,8 @@ actor CopilotProvider: AIProvider {
 
     // MARK: - Enriched Commit Summarization
 
-    /// Max tokens for Copilot (64K limit, leave room for prompt overhead)
-    private static let maxTokensPerCall = 40_000
+    /// Max tokens for Copilot (64K limit, leave generous room for prompt overhead and response)
+    private static let maxTokensPerCall = 20_000
 
     func summarizeWeekEnriched(
         commits: [EnrichedCommit],
@@ -164,7 +164,7 @@ actor CopilotProvider: AIProvider {
                     currentTokens = 0
                 }
                 batches.append([commit])
-            } else if currentTokens + tokens > Self.maxTokensPerCall || currentBatch.count >= 15 {
+            } else if currentTokens + tokens > Self.maxTokensPerCall || currentBatch.count >= 8 {
                 // Start new batch if would exceed limit or too many commits
                 if !currentBatch.isEmpty {
                     batches.append(currentBatch)
@@ -184,8 +184,8 @@ actor CopilotProvider: AIProvider {
         return batches
     }
 
-    /// Max chars per diff to avoid token overflow (~40K chars ≈ 10K tokens)
-    private static let maxDiffChars = 40_000
+    /// Max chars per diff to avoid token overflow (~15K chars ≈ 4K tokens)
+    private static let maxDiffChars = 15_000
 
     private func summarizeBatch(
         commits: [EnrichedCommit],
@@ -260,8 +260,8 @@ actor CopilotProvider: AIProvider {
             return commit.commit.message
         }
 
-        // Copilot has 64K token limit, use ~80K chars (~20K tokens) to leave room for prompt
-        let chunkSize = 80_000
+        // Copilot has 64K token limit, use ~40K chars (~10K tokens) to leave room for prompt
+        let chunkSize = 40_000
         let chunks = diff.chunked(into: chunkSize)
 
         if chunks.count == 1 {
