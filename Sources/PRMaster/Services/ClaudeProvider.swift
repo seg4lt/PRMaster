@@ -50,12 +50,23 @@ actor ClaudeProvider: AIProvider {
         Keep it concise (2-4 sentences). Do not include the commit SHAs in your response.
         """
 
+        let start = Date()
+        let displayPrompt = "Summarize \(weekLabel) (\(commits.count) commits)"
+
         do {
             let output = try await shell.execute("claude", arguments: [
                 "-p", prompt,
                 "--output-format", "json",
                 "--max-turns", "1"
             ])
+
+            let duration = Date().timeIntervalSince(start)
+            await GitHubService.shared.addExternalLog(
+                command: "claude",
+                duration: duration,
+                success: true,
+                prompt: displayPrompt
+            )
 
             // Parse the JSON response
             guard let data = output.data(using: .utf8) else {
@@ -65,6 +76,14 @@ actor ClaudeProvider: AIProvider {
             let response = try JSONDecoder().decode(ClaudeResponse.self, from: data)
             return response.result
         } catch let error as ShellError {
+            let duration = Date().timeIntervalSince(start)
+            await GitHubService.shared.addExternalLog(
+                command: "claude",
+                duration: duration,
+                success: false,
+                prompt: displayPrompt
+            )
+
             switch error {
             case .commandFailed(let output, _):
                 throw AIProviderError.executionFailed(output)
@@ -74,6 +93,13 @@ actor ClaudeProvider: AIProvider {
         } catch let error as AIProviderError {
             throw error
         } catch {
+            let duration = Date().timeIntervalSince(start)
+            await GitHubService.shared.addExternalLog(
+                command: "claude",
+                duration: duration,
+                success: false,
+                prompt: displayPrompt
+            )
             throw AIProviderError.executionFailed(error.localizedDescription)
         }
     }

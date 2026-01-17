@@ -84,6 +84,17 @@ actor GitHubService {
         (totalRequests, sessionRequests, callLogs)
     }
 
+    /// Add an external API call log (used by other services like ClaudeProvider)
+    func addExternalLog(command: String, duration: TimeInterval, success: Bool, prompt: String? = nil) {
+        var logCommand = command
+        if let prompt = prompt {
+            // Truncate long prompts for display
+            let truncated = prompt.count > 100 ? String(prompt.prefix(100)) + "..." : prompt
+            logCommand = "\(command): \(truncated)"
+        }
+        trackCall(command: logCommand, duration: duration, success: success)
+    }
+
     func getCurrentUser() async throws -> String {
         let start = Date()
         do {
