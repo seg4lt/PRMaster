@@ -203,9 +203,11 @@ struct CommitNodes: Codable {
 
 struct CommitNode: Codable {
     let commit: CommitInfo
+    let sha: String?
 }
 
 struct CommitInfo: Codable {
+    let oid: String?
     let statusCheckRollup: StatusCheckRollup?
 }
 

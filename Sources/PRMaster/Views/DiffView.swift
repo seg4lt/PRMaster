@@ -39,11 +39,18 @@ class PRDiffViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var error: String?
     @Published var files: [ChangedFile] = []
+    @Published var commentViewModel: ReviewCommentViewModel
 
     private let pr: EnrichedPullRequest
 
     init(pr: EnrichedPullRequest) {
         self.pr = pr
+        self.commentViewModel = ReviewCommentViewModel(pr: pr, filePaths: [])
+    }
+
+    func updateCommentFilePaths() {
+        let filePaths = files.map { $0.path }
+        commentViewModel = ReviewCommentViewModel(pr: pr, filePaths: filePaths)
     }
 
     func loadDiff() async {
@@ -78,6 +85,10 @@ class PRDiffViewModel: ObservableObject {
             }
 
             self.files = files
+
+            // Step 5: Load comments
+            updateCommentFilePaths()
+            await commentViewModel.loadComments()
         } catch {
             self.error = error.localizedDescription
         }
@@ -124,6 +135,7 @@ struct PRDiffView: View {
     let pr: EnrichedPullRequest
     @StateObject private var viewModel: PRDiffViewModel
     @State private var expandedFiles = Set<String>()
+    @State private var showReviewPanel: Bool = false
 
     init(pr: EnrichedPullRequest) {
         self.pr = pr
@@ -149,6 +161,12 @@ struct PRDiffView: View {
                 await viewModel.loadDiff()
             }
         }
+        .sheet(isPresented: $showReviewPanel) {
+            ReviewSubmissionPanel(
+                commentViewModel: viewModel.commentViewModel,
+                pr: pr
+            )
+        }
     }
 
     private var headerView: some View {
@@ -171,9 +189,31 @@ struct PRDiffView: View {
             Spacer()
 
             if !viewModel.isLoading && !viewModel.files.isEmpty {
-                Text("\(viewModel.files.count) file\(viewModel.files.count == 1 ? "" : "s") changed")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 12) {
+                    if !viewModel.commentViewModel.drafts.isEmpty {
+                        Button(action: { showReviewPanel = true }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "bubble.left.fill")
+                                    .font(.caption)
+                                Text("Submit Review")
+                                    .font(.body)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Text("\(viewModel.files.count) file\(viewModel.files.count == 1 ? "" : "s") changed")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(12)
@@ -244,7 +284,8 @@ struct PRDiffView: View {
                                 }
                             }
                         },
-                        commitId: nil
+                        commitId: nil,
+                        commentViewModel: viewModel.commentViewModel
                     )
                 }
             }
@@ -257,6 +298,7 @@ struct FileDiffView: View {
     let isExpanded: Bool
     let onToggle: () -> Void
     var commitId: String? = nil
+    @ObservedObject var commentViewModel: ReviewCommentViewModel
 
     private var fileName: String {
         (file.path as NSString).lastPathComponent
@@ -318,7 +360,12 @@ struct FileDiffView: View {
                 } else if isBinaryFile {
                     binaryFileWarning
                 } else if let patch = file.patch {
-                    InlineDiffView(patch: patch, filePath: file.path, commitId: commitId)
+                    InlineDiffView(
+                        patch: patch,
+                        filePath: file.path,
+                        commitId: commitId,
+                        commentViewModel: commentViewModel
+                    )
                 }
             }
         }
@@ -400,9 +447,16 @@ struct InlineDiffView: View {
     let patch: String
     let filePath: String
     let commitId: String?
+    @ObservedObject var commentViewModel: ReviewCommentViewModel
+    @State private var expandedCommentLines = Set<String>()
 
     private var diffLines: [DiffLine] {
         parseDiffWithLineNumbers(patch)
+    }
+
+    private func lineIdentifier(_ line: DiffLine) -> String {
+        let side: CommentSide = line.type == .removed ? .left : .right
+        return "\(line.filePath)-\(line.oldLineNumber ?? line.newLineNumber ?? 0)-\(side.rawValue)"
     }
 
     private func parseDiffWithLineNumbers(_ patch: String) -> [DiffLine] {
@@ -497,7 +551,62 @@ struct InlineDiffView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(diffLines.enumerated()), id: \.offset) { index, line in
-                    DiffLineView(line: line, commentCount: 0, onCommentToggle: {})
+                    let side: CommentSide = line.type == .removed ? .left : .right
+                    let lineNumber = line.type == .removed ? line.oldLineNumber : line.newLineNumber
+                    let comments = commentViewModel.getCommentsForLine(
+                        filePath: filePath,
+                        line: lineNumber ?? 0,
+                        side: side
+                    )
+                    let draft = commentViewModel.getDraftForLine(
+                        filePath: filePath,
+                        line: lineNumber ?? 0,
+                        side: side
+                    )
+                    let hasComments = !comments.isEmpty || draft != nil
+
+                    VStack(alignment: .leading, spacing: 0) {
+                    DiffLineView(
+                        line: line,
+                        commentCount: comments.count,
+                        onCommentToggle: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                let identifier = lineIdentifier(line)
+                                if expandedCommentLines.contains(identifier) {
+                                    expandedCommentLines.remove(identifier)
+                                } else {
+                                    expandedCommentLines.insert(identifier)
+                                }
+                            }
+                        }
+                    )
+
+                    if hasComments && expandedCommentLines.contains(lineIdentifier(line)) {
+                        Divider()
+                        InlineCommentView(
+                            comments: comments,
+                            draft: draft,
+                            onDraftBodyChange: { commentViewModel.updateDraft($0, body: $1) },
+                            onDeleteDraft: { commentViewModel.deleteDraft($0) },
+                            onEditComment: { comment in
+                                // TODO: Implement comment editing
+                            },
+                            onDeleteComment: { comment in
+                                Task {
+                                    try await GitHubService.shared.deleteReviewComment(
+                                        owner: pr.pr.repository.owner,
+                                        repo: pr.pr.repository.name,
+                                        commentId: comment.id
+                                    )
+                                    await commentViewModel.loadComments()
+                                }
+                            },
+                            onReply: { _, _ in
+                                // TODO: Implement comment replies
+                            }
+                        )
+                    }
+                    }
                 }
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
