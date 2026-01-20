@@ -122,6 +122,59 @@ class FullWindowController: NSObject, NSWindowDelegate {
     }
 }
 
+// Window controller to manage the review PR window
+class ReviewWindowController: NSObject, NSWindowDelegate {
+    static let shared = ReviewWindowController()
+
+    private var windowControllers: [NSWindowController] = []
+
+    func openReviewWindow(pr: EnrichedPullRequest) {
+        // CRITICAL: Change activation policy to allow showing windows
+        NSApp.setActivationPolicy(.regular)
+
+        // Create a blank SwiftUI view for now
+        let contentView = Text("Review PR")
+            .font(.title)
+            .frame(minWidth: 800, minHeight: 600)
+
+        // Create the window
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Review PR - #\(pr.pr.number)"
+        window.contentView = NSHostingView(rootView: contentView)
+        window.center()
+        window.delegate = self
+
+        // Make window key and order front before creating controller
+        window.makeKeyAndOrderFront(nil)
+
+        // Create window controller and show
+        let windowController = NSWindowController(window: window)
+        windowControllers.append(windowController)
+        windowController.showWindow(nil)
+
+        // Activate the app
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        // Remove window controller from array
+        if let window = notification.object as? NSWindow,
+           let index = windowControllers.firstIndex(where: { $0.window == window }) {
+            windowControllers.remove(at: index)
+        }
+
+        // If no more windows, switch back to accessory mode (menu bar only, no Dock icon)
+        if windowControllers.isEmpty {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+}
+
 @MainActor
 class AppState: ObservableObject {
     static let shared = AppState()
@@ -293,6 +346,8 @@ struct MenuBarContentView: View {
                 modelContainer: modelContainer,
                 appState: appState
             )
+        }, onReviewPR: { pr in
+            ReviewWindowController.shared.openReviewWindow(pr: pr)
         })
     }
 }
@@ -301,7 +356,9 @@ struct FullWindowView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        MainView(isCompact: false, showAPIStatsTab: true)
+        MainView(isCompact: false, showAPIStatsTab: true, onReviewPR: { pr in
+            ReviewWindowController.shared.openReviewWindow(pr: pr)
+        })
     }
 }
 

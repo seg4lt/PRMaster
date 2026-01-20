@@ -3,6 +3,7 @@ import SwiftUI
 struct MyPRsView: View {
     @ObservedObject var viewModel: PRListViewModel
     @State private var selectedPR: EnrichedPullRequest?
+    var onReviewPR: ((EnrichedPullRequest) -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,7 +17,9 @@ struct MyPRsView: View {
 
             if let selected = selectedPR {
                 Divider()
-                PRDetailView(pr: selected)
+                PRDetailView(pr: selected) {
+                    onReviewPR?(selected)
+                }
             }
         }
     }

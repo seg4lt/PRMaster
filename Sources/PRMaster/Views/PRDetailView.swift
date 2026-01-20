@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PRDetailView: View {
     let pr: EnrichedPullRequest
+    var onReviewPR: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -127,6 +128,14 @@ struct PRDetailView: View {
                 Label("Open in Browser", systemImage: "safari")
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+
+            Button {
+                onReviewPR?()
+            } label: {
+                Label("Review PR", systemImage: "pencil")
+            }
+            .buttonStyle(.bordered)
             .controlSize(.small)
 
             Button {

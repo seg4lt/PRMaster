@@ -48,16 +48,18 @@ struct MainView: View {
     let isCompact: Bool
     let showAPIStatsTab: Bool
     var openWindowAction: (() -> Void)?
+    var onReviewPR: ((EnrichedPullRequest) -> Void)?
 
     @State private var selectedTab: Tab = .toReview
     @ObservedObject private var viewModel = PRListViewModel.shared
     @Query private var savedFilters: [NotificationFilter]
     @State private var selectedSavedFilter: NotificationFilter?
 
-    init(isCompact: Bool = true, showAPIStatsTab: Bool = false, openWindowAction: (() -> Void)? = nil) {
+    init(isCompact: Bool = true, showAPIStatsTab: Bool = false, openWindowAction: (() -> Void)? = nil, onReviewPR: ((EnrichedPullRequest) -> Void)? = nil) {
         self.isCompact = isCompact
         self.showAPIStatsTab = showAPIStatsTab
         self.openWindowAction = openWindowAction
+        self.onReviewPR = onReviewPR
     }
 
     private var availableTabs: [Tab] {
@@ -237,7 +239,8 @@ struct MainView: View {
                     currentUser: viewModel.currentUser,
                     isLoading: viewModel.isLoading,
                     emptyMessage: "No PRs awaiting your review",
-                    isCompact: isCompact
+                    isCompact: isCompact,
+                    onReviewPR: onReviewPR
                 )
             }
         case .reviewed:
@@ -254,11 +257,12 @@ struct MainView: View {
                     currentUser: viewModel.currentUser,
                     isLoading: viewModel.isLoading,
                     emptyMessage: "No PRs you've reviewed",
-                    isCompact: isCompact
+                    isCompact: isCompact,
+                    onReviewPR: onReviewPR
                 )
             }
         case .myPRs:
-            MyPRsView(viewModel: viewModel)
+            MyPRsView(viewModel: viewModel, onReviewPR: onReviewPR)
         case .filters:
             FiltersView()
         case .settings:

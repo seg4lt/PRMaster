@@ -6,15 +6,17 @@ struct PRListView: View {
     let isLoading: Bool
     let emptyMessage: String
     let isCompact: Bool
+    var onReviewPR: ((EnrichedPullRequest) -> Void)?
 
     @State private var selectedPR: EnrichedPullRequest?
 
-    init(prs: [EnrichedPullRequest], currentUser: String? = nil, isLoading: Bool, emptyMessage: String, isCompact: Bool = true) {
+    init(prs: [EnrichedPullRequest], currentUser: String? = nil, isLoading: Bool, emptyMessage: String, isCompact: Bool = true, onReviewPR: ((EnrichedPullRequest) -> Void)? = nil) {
         self.prs = prs
         self.currentUser = currentUser
         self.isLoading = isLoading
         self.emptyMessage = emptyMessage
         self.isCompact = isCompact
+        self.onReviewPR = onReviewPR
     }
 
     var body: some View {
@@ -29,7 +31,9 @@ struct PRListView: View {
 
             if let selected = selectedPR {
                 Divider()
-                PRDetailView(pr: selected)
+                PRDetailView(pr: selected) {
+                    onReviewPR?(selected)
+                }
             }
         }
     }
