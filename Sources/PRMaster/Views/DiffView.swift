@@ -12,11 +12,15 @@ struct DiffLine {
     let type: DiffLineType
     let oldLineNumber: Int?
     let newLineNumber: Int?
+    let filePath: String
+    let commitId: String?
 
-    init(content: String, oldLineNumber: Int? = nil, newLineNumber: Int? = nil) {
+    init(content: String, oldLineNumber: Int? = nil, newLineNumber: Int? = nil, filePath: String = "", commitId: String? = nil) {
         self.content = content
         self.oldLineNumber = oldLineNumber
         self.newLineNumber = newLineNumber
+        self.filePath = filePath
+        self.commitId = commitId
 
         if content.hasPrefix("+") && !content.hasPrefix("+++") {
             type = .added
@@ -230,16 +234,18 @@ struct PRDiffView: View {
                 ForEach(viewModel.files) { file in
                     FileDiffView(
                         file: file,
-                        isExpanded: expandedFiles.contains(file.id)
-                    ) {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            if expandedFiles.contains(file.id) {
-                                expandedFiles.remove(file.id)
-                            } else {
-                                expandedFiles.insert(file.id)
+                        isExpanded: expandedFiles.contains(file.id),
+                        onToggle: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                if expandedFiles.contains(file.id) {
+                                    expandedFiles.remove(file.id)
+                                } else {
+                                    expandedFiles.insert(file.id)
+                                }
                             }
-                        }
-                    }
+                        },
+                        commitId: nil
+                    )
                 }
             }
         }
@@ -250,6 +256,7 @@ struct FileDiffView: View {
     let file: ChangedFile
     let isExpanded: Bool
     let onToggle: () -> Void
+    var commitId: String? = nil
 
     private var fileName: String {
         (file.path as NSString).lastPathComponent
@@ -311,7 +318,7 @@ struct FileDiffView: View {
                 } else if isBinaryFile {
                     binaryFileWarning
                 } else if let patch = file.patch {
-                    InlineDiffView(patch: patch)
+                    InlineDiffView(patch: patch, filePath: file.path, commitId: commitId)
                 }
             }
         }
@@ -391,6 +398,8 @@ struct FileDiffView: View {
 
 struct InlineDiffView: View {
     let patch: String
+    let filePath: String
+    let commitId: String?
 
     private var diffLines: [DiffLine] {
         parseDiffWithLineNumbers(patch)
@@ -478,7 +487,7 @@ struct InlineDiffView: View {
                 newLineNum += 1
             }
 
-            lines.append(DiffLine(content: line, oldLineNumber: oldNum, newLineNumber: newNum))
+            lines.append(DiffLine(content: line, oldLineNumber: oldNum, newLineNumber: newNum, filePath: filePath, commitId: commitId))
         }
 
         return lines
@@ -488,17 +497,26 @@ struct InlineDiffView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(diffLines.enumerated()), id: \.offset) { index, line in
-                    DiffLineView(line: line)
+                    DiffLineView(line: line, commentCount: 0, onCommentToggle: {})
                 }
             }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
-        .font(.system(.caption, design: .monospaced))
+        .font(.system(.body, design: .monospaced))
         .background(Color(NSColor.textBackgroundColor))
     }
 }
 
 struct DiffLineView: View {
     let line: DiffLine
+    let commentCount: Int
+    let onCommentToggle: () -> Void
+
+    init(line: DiffLine, commentCount: Int = 0, onCommentToggle: @escaping () -> Void = {}) {
+        self.line = line
+        self.commentCount = commentCount
+        self.onCommentToggle = onCommentToggle
+    }
 
     private var backgroundColor: Color? {
         switch line.type {
@@ -536,7 +554,7 @@ struct DiffLineView: View {
                 Text(line.oldLineNumber.map(String.init) ?? "")
                     .foregroundColor(.secondary.opacity(0.6))
                     .frame(width: 50, alignment: .trailing)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.caption2, design: .monospaced))
 
                 // Separator
                 Rectangle()
@@ -547,15 +565,42 @@ struct DiffLineView: View {
                 Text(line.newLineNumber.map(String.init) ?? "")
                     .foregroundColor(.secondary.opacity(0.6))
                     .frame(width: 50, alignment: .trailing)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.caption2, design: .monospaced))
 
                 // Separator
                 Rectangle()
                     .fill(Color.secondary.opacity(0.2))
                     .frame(width: 1)
             }
-            .frame(height: 20)
+            .frame(height: 24)
             .background(Color(NSColor.textBackgroundColor))
+
+            // Comment indicator
+            if commentCount > 0 {
+                Button(action: onCommentToggle) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bubble.left.fill")
+                            .font(.caption2)
+                        Text("\(commentCount)")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .help("\(commentCount) comment\(commentCount == 1 ? "" : "s")")
+            } else {
+                Button(action: onCommentToggle) {
+                    Image(systemName: "plus")
+                        .font(.caption2)
+                        .foregroundColor(.secondary.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+                .help("Add comment")
+            }
 
             // Diff content
             HStack(alignment: .top, spacing: 8) {
@@ -575,6 +620,6 @@ struct DiffLineView: View {
             .padding(.vertical, 2)
             .background(backgroundColor ?? Color.clear)
         }
-        .frame(height: line.type == .context ? 20 : nil)
+        .frame(height: line.type == .context ? 24 : nil)
     }
 }

@@ -647,6 +647,163 @@ actor GitHubService {
 
         return allDiffs
     }
+
+    // MARK: - Review Comments
+
+    func fetchReviewComments(owner: String, repo: String, number: Int) async throws -> [PullRequestReviewComment] {
+        let start = Date()
+        let command = "api pull request comments"
+
+        do {
+            let output = try await shell.executeGH([
+                "api",
+                "repos/\(owner)/\(repo)/pulls/\(number)/comments",
+                "--paginate"
+            ])
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            let data = Data(output.utf8)
+            return try decoder.decode([PullRequestReviewComment].self, from: data)
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
+    func createReviewComment(
+        owner: String,
+        repo: String,
+        number: Int,
+        path: String,
+        line: Int,
+        side: String,
+        commitId: String,
+        body: String
+    ) async throws -> PullRequestReviewComment {
+        let start = Date()
+        let command = "api create review comment"
+
+        do {
+            let requestBody: [String: Any] = [
+                "body": body,
+                "commit_id": commitId,
+                "path": path,
+                "line": line,
+                "side": side
+            ]
+
+            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
+
+            let output = try await shell.executeGH([
+                "api",
+                "-X", "POST",
+                "repos/\(owner)/\(repo)/pulls/\(number)/comments",
+                "-f", jsonString
+            ])
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            let data = Data(output.utf8)
+            return try decoder.decode(PullRequestReviewComment.self, from: data)
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
+    func updateReviewComment(
+        owner: String,
+        repo: String,
+        commentId: Int,
+        body: String
+    ) async throws -> PullRequestReviewComment {
+        let start = Date()
+        let command = "api update review comment"
+
+        do {
+            let requestBody: [String: Any] = [
+                "body": body
+            ]
+
+            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
+
+            let output = try await shell.executeGH([
+                "api",
+                "-X", "PATCH",
+                "repos/\(owner)/\(repo)/pulls/comments/\(commentId)",
+                "-f", jsonString
+            ])
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            let data = Data(output.utf8)
+            return try decoder.decode(PullRequestReviewComment.self, from: data)
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
+    func deleteReviewComment(owner: String, repo: String, commentId: Int) async throws {
+        let start = Date()
+        let command = "api delete review comment"
+
+        do {
+            _ = try await shell.executeGH([
+                "api",
+                "-X", "DELETE",
+                "repos/\(owner)/\(repo)/pulls/comments/\(commentId)"
+            ])
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
+    func createPullRequestReview(
+        owner: String,
+        repo: String,
+        number: Int,
+        commitId: String,
+        event: String,
+        body: String = "",
+        comments: [[String: Any]] = []
+    ) async throws -> String {
+        let start = Date()
+        let command = "api create pull request review"
+
+        do {
+            var requestBody: [String: Any] = [
+                "commit_id": commitId,
+                "event": event
+            ]
+
+            if !body.isEmpty {
+                requestBody["body"] = body
+            }
+
+            if !comments.isEmpty {
+                requestBody["comments"] = comments
+            }
+
+            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
+
+            let output = try await shell.executeGH([
+                "api",
+                "-X", "POST",
+                "repos/\(owner)/\(repo)/pulls/\(number)/reviews",
+                "-f", jsonString
+            ])
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            return output
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
 }
 
 // MARK: - Array Extension for Chunking
