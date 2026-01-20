@@ -380,23 +380,47 @@ actor GitHubService {
 
     // MARK: - Repository Listing
 
+    /// Fetch list of organizations user belongs to
+    func fetchUserOrganizations() async throws -> [String] {
+        let output = try await shell.executeGH([
+            "org", "list"
+        ])
+        return output.components(separatedBy: "\n").filter { !$0.isEmpty }
+    }
+
     /// Fetch all repos the user has access to (personal + org)
     func fetchAccessibleRepos() async throws -> [String] {
         let start = Date()
         let command = "list repos"
 
         do {
-            // Use gh repo list which shows all accessible repos
-            let output = try await shell.executeGH([
+            var allRepos: [String] = []
+
+            // Fetch personal repos
+            let personalOutput = try await shell.executeGH([
                 "repo", "list",
-                "--limit", "200",
+                "--limit", "1000",
                 "--json", "nameWithOwner",
                 "--jq", ".[].nameWithOwner"
             ])
+            allRepos.append(contentsOf: personalOutput.components(separatedBy: "\n").filter { !$0.isEmpty })
+
+            // Fetch org repos
+            let orgs = try await fetchUserOrganizations()
+            for org in orgs {
+                let orgOutput = try await shell.executeGH([
+                    "repo", "list", org,
+                    "--limit", "1000",
+                    "--json", "nameWithOwner",
+                    "--jq", ".[].nameWithOwner"
+                ])
+                allRepos.append(contentsOf: orgOutput.components(separatedBy: "\n").filter { !$0.isEmpty })
+            }
+
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
 
-            guard !output.isEmpty else { return [] }
-            return output.components(separatedBy: "\n").filter { !$0.isEmpty }
+            // Remove duplicates and sort
+            return Array(Set(allRepos)).sorted()
         } catch {
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
             throw error
