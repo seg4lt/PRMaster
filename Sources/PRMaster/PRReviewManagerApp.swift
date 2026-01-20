@@ -184,7 +184,17 @@ struct PRReviewManagerApp: App {
         ])
 
         do {
-            modelContainer = try ModelContainer(for: NotificationFilter.self)
+            let fileManager = FileManager.default
+            guard let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+                fatalError("Unable to access Application Support directory")
+            }
+            let appName = "PRMaster"
+            let directoryURL = appSupportURL.appendingPathComponent(appName)
+            let fileURL = directoryURL.appendingPathComponent("prmaster.store")
+            try fileManager.createDirectory (at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+            let schema = Schema([NotificationFilter.self]);
+            let modelConfig = ModelConfiguration(appName, schema: schema, url: fileURL)
+            modelContainer = try ModelContainer(for: schema, configurations: modelConfig)
         } catch {
             fatalError("Failed to create ModelContainer: \(error)")
         }
