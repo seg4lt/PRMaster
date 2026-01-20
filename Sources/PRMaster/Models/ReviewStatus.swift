@@ -90,3 +90,19 @@ struct Review: Codable, Identifiable {
 struct ReviewAuthor: Codable {
     let login: String
 }
+
+struct PullRequestReview: Codable {
+    let id: Int
+    let user: ReviewAuthor
+    let body: String?
+    let state: String
+    let html_url: String?
+    let submitted_at: Date?
+    let pull_request_url: String?
+    let commit_id: String
+}
+
+struct Review: Codable, Identifiable {
+    let author: ReviewAuthor?
+    let state: ReviewState
+}

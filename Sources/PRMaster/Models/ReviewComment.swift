@@ -83,6 +83,8 @@ struct CommentDraft: Identifiable, Equatable {
     var body: String
     var isModified: Bool
     var isNew: Bool
+    var reviewId: String?
+    var isSynced: Bool = false
 
     init(filePath: String, line: Int, side: CommentSide, body: String = "") {
         self.id = UUID()
@@ -92,6 +94,7 @@ struct CommentDraft: Identifiable, Equatable {
         self.body = body
         self.isModified = false
         self.isNew = true
+        self.isSynced = false
     }
 
     static func == (lhs: CommentDraft, rhs: CommentDraft) -> Bool {
@@ -105,6 +108,8 @@ class ReviewCommentViewModel: ObservableObject {
     @Published var drafts: [CommentDraft] = []
     @Published var isLoading: Bool = false
     @Published var error: String?
+    @Published var pendingReviewId: String?
+    @Published var isPendingReviewActive: Bool = false
 
     private let pr: EnrichedPullRequest
     private let filePaths: [String]
@@ -159,6 +164,8 @@ class ReviewCommentViewModel: ObservableObject {
 
     func clearDrafts() {
         drafts.removeAll()
+        pendingReviewId = nil
+        isPendingReviewActive = false
     }
 
     func getCommentsForLine(filePath: String, line: Int, side: CommentSide) -> [PullRequestReviewComment] {
@@ -180,5 +187,34 @@ class ReviewCommentViewModel: ObservableObject {
     func hasCommentsForLine(filePath: String, line: Int, side: CommentSide) -> Bool {
         !getCommentsForLine(filePath: filePath, line: line, side: side).isEmpty ||
         getDraftForLine(filePath: filePath, line: line, side: side) != nil
+    }
+
+    func loadPendingReviewIfExists() async throws {
+        guard pendingReviewId == nil else { return }
+
+        do {
+            let reviews = try await GitHubService.shared.listReviewsForPullRequest(
+                owner: pr.pr.repository.owner,
+                repo: pr.pr.repository.name,
+                number: pr.pr.number
+            )
+
+            // Find pending review for current user
+            if let pendingReview = reviews.first(where: { review in
+                review.state == "PENDING" &&
+                review.user.login == getCurrentUserLogin()
+            ) {
+                pendingReviewId = pendingReview.id
+                isPendingReviewActive = true
+            }
+        } catch {
+            self.error = error.localizedDescription
+            throw error
+        }
+    }
+
+    private func getCurrentUserLogin() -> String {
+        // Get current user login from GH CLI
+        UserDefaults.standard.string(forKey: "ghUsername") ?? "unknown"
     }
 }

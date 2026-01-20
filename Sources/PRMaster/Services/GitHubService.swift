@@ -761,27 +761,23 @@ actor GitHubService {
         }
     }
 
-    func createPullRequestReview(
+    func createPendingReview(
         owner: String,
         repo: String,
         number: Int,
         commitId: String,
-        event: String,
         body: String = "",
         comments: [[String: Any]] = []
     ) async throws -> String {
         let start = Date()
-        let command = "api create pull request review"
+        let command = "api create pending review"
 
         do {
             var requestBody: [String: Any] = [
                 "commit_id": commitId,
-                "event": event
+                "event": "",
+                "body": body
             ]
-
-            if !body.isEmpty {
-                requestBody["body"] = body
-            }
 
             if !comments.isEmpty {
                 requestBody["comments"] = comments
@@ -799,6 +795,106 @@ actor GitHubService {
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
 
             return output
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
+    func submitPendingReview(
+        owner: String,
+        repo: String,
+        number: Int,
+        reviewId: String,
+        event: String,
+        body: String = ""
+    ) async throws -> String {
+        let start = Date()
+        let command = "api submit review"
+
+        do {
+            var requestBody: [String: Any] = [
+                "event": event
+            ]
+
+            if !body.isEmpty {
+                requestBody["body"] = body
+            }
+
+            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
+
+            let output = try await shell.executeGH([
+                "api",
+                "-X", "POST",
+                "repos/\(owner)/\(repo)/pulls/\(number)/reviews/\(reviewId)",
+                "-f", jsonString
+            ])
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            return output
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
+    func createReviewCommentInPendingReview(
+        owner: String,
+        repo: String,
+        number: Int,
+        reviewId: String,
+        path: String,
+        line: Int,
+        side: String,
+        body: String
+    ) async throws -> PullRequestReviewComment {
+        let start = Date()
+        let command = "api create review comment"
+
+        do {
+            let requestBody: [String: Any] = [
+                "body": body,
+                "line": line,
+                "path": path,
+                "side": side
+            ]
+
+            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
+
+            let output = try await shell.executeGH([
+                "api",
+                "-X", "POST",
+                "repos/\(owner)/\(repo)/pulls/\(number)/reviews/\(reviewId)/comments",
+                "-f", jsonString
+            ])
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            return output
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
+    func listReviewsForPullRequest(
+        owner: String,
+        repo: String,
+        number: Int
+    ) async throws -> [PullRequestReview] {
+        let start = Date()
+        let command = "api list reviews for pull request"
+
+        do {
+            let output = try await shell.executeGH([
+                "api",
+                "repos/\(owner)/\(repo)/pulls/\(number)/reviews"
+            ])
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            let data = Data(output.utf8)
+            return try decoder.decode([PullRequestReview].self, from: data)
         } catch {
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
             throw error
