@@ -129,7 +129,7 @@ struct ChangedFile: Codable, Identifiable {
     let deletions: Int?
     let changes: Int?
     let changeType: String?
-    let patch: String?
+    var patch: String?
     var id: String { path }
 }
 

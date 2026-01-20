@@ -203,9 +203,7 @@ actor GitHubService {
                   path
                   additions
                   deletions
-                  changes
                   changeType
-                  patch
                 }
               }
         """
@@ -555,6 +553,26 @@ actor GitHubService {
         }
 
         return filtered.map { "diff --git " + $0 }.joined()
+    }
+
+    /// Fetch full diff for a pull request
+    func fetchPRDiffRaw(owner: String, repo: String, number: Int) async throws -> String {
+        let start = Date()
+        let command = "diff \(repo):#\(number)"
+
+        do {
+            let diff = try await withRetry {
+                try await shell.executeGH([
+                    "api", "repos/\(owner)/\(repo)/pulls/\(number)",
+                    "-H", "Accept: application/vnd.github.diff"
+                ])
+            }
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+            return filterDiff(diff)
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
     }
 
     /// Fetch diff for a single commit

@@ -48,20 +48,72 @@ class PRDiffViewModel: ObservableObject {
         error = nil
 
         do {
+            // Step 1: Fetch file metadata via GraphQL
             let detail = try await GitHubService.shared.fetchPRDiff(
                 owner: pr.pr.repository.owner,
                 repo: pr.pr.repository.name,
                 number: pr.pr.number
             )
 
-            if let detail, let files = detail.files?.nodes {
-                self.files = files
+            var files = detail?.files?.nodes ?? []
+
+            // Step 2: Fetch full diff via REST API
+            let diffRaw = try await GitHubService.shared.fetchPRDiffRaw(
+                owner: pr.pr.repository.owner,
+                repo: pr.pr.repository.name,
+                number: pr.pr.number
+            )
+
+            // Step 3: Parse diff and associate with files
+            let parsedPatches = parseUnifiedDiff(diffRaw)
+
+            // Step 4: Match patches with files by path
+            for index in files.indices {
+                if let patch = parsedPatches[files[index].path] {
+                    files[index].patch = patch
+                }
             }
+
+            self.files = files
         } catch {
             self.error = error.localizedDescription
         }
 
         isLoading = false
+    }
+
+    private func parseUnifiedDiff(_ diff: String) -> [String: String] {
+        var patches: [String: String] = [:]
+        let sections = diff.components(separatedBy: "diff --git ")
+
+        for section in sections {
+            guard !section.isEmpty else { continue }
+
+            // Extract file path from +++ b/path line
+            let lines = section.components(separatedBy: "\n")
+            var filePath: String?
+
+            for line in lines {
+                if line.hasPrefix("+++") {
+                    // Format: +++ b/path/to/file
+                    let parts = line.split(separator: " ", maxSplits: 1)
+                    if parts.count == 2 {
+                        var path = String(parts[1])
+                        if path.hasPrefix("b/") {
+                            path = String(path.dropFirst(2))
+                        }
+                        filePath = path
+                    }
+                    break
+                }
+            }
+
+            if let path = filePath {
+                patches[path] = "diff --git " + section
+            }
+        }
+
+        return patches
     }
 }
 
