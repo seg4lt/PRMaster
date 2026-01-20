@@ -5,6 +5,7 @@ struct InlineCommentView: View {
     let draft: CommentDraft?
     let onDraftBodyChange: (CommentDraft, String) -> Void
     let onDeleteDraft: (CommentDraft) -> Void
+    let onSaveDraft: (CommentDraft) -> Void
     let onEditComment: (PullRequestReviewComment) -> Void
     let onDeleteComment: (PullRequestReviewComment) -> Void
     let onReply: (PullRequestReviewComment, String) -> Void
@@ -26,7 +27,8 @@ struct InlineCommentView: View {
                 CommentDraftView(
                     draft: draft,
                     onBodyChange: { onDraftBodyChange(draft, $0) },
-                    onDelete: { onDeleteDraft(draft) }
+                    onDelete: { onDeleteDraft(draft) },
+                    onSave: { onSaveDraft(draft) }
                 )
             }
         }
@@ -147,6 +149,7 @@ struct CommentDraftView: View {
     let draft: CommentDraft
     let onBodyChange: (String) -> Void
     let onDelete: () -> Void
+    let onSave: () -> Void
 
     @FocusState private var isFocused: Bool
 
@@ -159,12 +162,24 @@ struct CommentDraftView: View {
 
                 Spacer()
 
-                Button(action: onDelete) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button(action: onSave) {
+                        Text("Save")
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(draft.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .keyboardShortcut(.return, modifiers: [])
+                    .help("Save comment (Enter)")
+
+                    Button(action: onDelete) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Delete draft")
                 }
-                .buttonStyle(.borderless)
-                .help("Delete draft")
             }
 
             TextEditor(text: Binding(

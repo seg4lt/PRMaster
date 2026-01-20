@@ -672,6 +672,10 @@ struct InlineDiffView: View {
                             draft: draft,
                             onDraftBodyChange: { commentViewModel.updateDraft($0, body: $1) },
                             onDeleteDraft: { commentViewModel.deleteDraft($0) },
+                            onSaveDraft: { _ in
+                                // Draft is already saved via onDraftBodyChange
+                                // This callback could be used to show success feedback
+                            },
                             onEditComment: { _ in
                                 // TODO: Implement comment editing
                             },
@@ -695,6 +699,7 @@ struct InlineDiffView: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity)
         .font(.system(size: fontSize, design: .monospaced))
         .background(Color(NSColor.textBackgroundColor))
     }
