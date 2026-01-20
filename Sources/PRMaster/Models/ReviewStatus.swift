@@ -101,8 +101,3 @@ struct PullRequestReview: Codable {
     let pull_request_url: String?
     let commit_id: String
 }
-
-struct Review: Codable, Identifiable {
-    let author: ReviewAuthor?
-    let state: ReviewState
-}
