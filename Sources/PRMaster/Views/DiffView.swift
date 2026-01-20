@@ -136,10 +136,24 @@ struct PRDiffView: View {
     @StateObject private var viewModel: PRDiffViewModel
     @State private var expandedFiles = Set<String>()
     @State private var showReviewPanel: Bool = false
+    @State private var fontSize: CGFloat {
+        didSet {
+            UserDefaults.standard.set(fontSize, forKey: "diffFontSize")
+        }
+    }
 
     init(pr: EnrichedPullRequest) {
         self.pr = pr
         self._viewModel = StateObject(wrappedValue: PRDiffViewModel(pr: pr))
+        self._fontSize = State(initialValue: UserDefaults.standard.object(forKey: "diffFontSize") as? CGFloat ?? 13.0)
+    }
+
+    private func increaseFontSize() {
+        fontSize = min(fontSize + 1, 30)
+    }
+
+    private func decreaseFontSize() {
+        fontSize = max(fontSize - 1, 8)
     }
 
     var body: some View {
@@ -156,6 +170,7 @@ struct PRDiffView: View {
                 diffFilesList
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
             if viewModel.files.isEmpty && !viewModel.isLoading {
                 await viewModel.loadDiff()
@@ -190,6 +205,29 @@ struct PRDiffView: View {
 
             if !viewModel.isLoading && !viewModel.files.isEmpty {
                 HStack(spacing: 12) {
+                    HStack(spacing: 4) {
+                        Button(action: decreaseFontSize) {
+                            Image(systemName: "minus.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .keyboardShortcut("-", modifiers: .command)
+                        .help("Decrease font size (Cmd+-)")
+
+                        Text(String(format: "%.0f", fontSize))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 30)
+
+                        Button(action: increaseFontSize) {
+                            Image(systemName: "plus.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .keyboardShortcut("=", modifiers: .command)
+                        .help("Increase font size (Cmd+=)")
+                    }
+
                     if !viewModel.commentViewModel.drafts.isEmpty {
                         Button(action: { showReviewPanel = true }) {
                             HStack(spacing: 6) {
@@ -286,11 +324,14 @@ struct PRDiffView: View {
                         },
                         commitId: nil,
                         pr: pr,
+                        fontSize: fontSize,
                         commentViewModel: viewModel.commentViewModel
                     )
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -300,6 +341,7 @@ struct FileDiffView: View {
     let onToggle: () -> Void
     var commitId: String? = nil
     let pr: EnrichedPullRequest
+    let fontSize: CGFloat
     @ObservedObject var commentViewModel: ReviewCommentViewModel
 
     private var fileName: String {
@@ -367,6 +409,7 @@ struct FileDiffView: View {
                         filePath: file.path,
                         commitId: commitId,
                         pr: pr,
+                        fontSize: fontSize,
                         commentViewModel: commentViewModel
                     )
                 }
@@ -451,6 +494,7 @@ struct InlineDiffView: View {
     let filePath: String
     let commitId: String?
     let pr: EnrichedPullRequest
+    let fontSize: CGFloat
     @ObservedObject var commentViewModel: ReviewCommentViewModel
     @State private var expandedCommentLines = Set<String>()
 
@@ -573,13 +617,49 @@ struct InlineDiffView: View {
                     DiffLineView(
                         line: line,
                         commentCount: comments.count,
+                        fontSize: fontSize,
                         onCommentToggle: {
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 let identifier = lineIdentifier(line)
-                                if expandedCommentLines.contains(identifier) {
-                                    expandedCommentLines.remove(identifier)
+                                let existingDraft = commentViewModel.getDraftForLine(
+                                    filePath: filePath,
+                                    line: lineNumber ?? 0,
+                                    side: side
+                                )
+
+                                if existingDraft != nil {
+                                    // Toggle expansion if draft exists
+                                    if expandedCommentLines.contains(identifier) {
+                                        expandedCommentLines.remove(identifier)
+                                    } else {
+                                        expandedCommentLines.insert(identifier)
+                                    }
                                 } else {
+                                    // Create new draft and expand
+                                    let newDraft = commentViewModel.addDraft(
+                                        filePath: filePath,
+                                        line: lineNumber ?? 0,
+                                        side: side
+                                    )
                                     expandedCommentLines.insert(identifier)
+                                }
+                            }
+                        },
+                        onAddComment: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                let existingDraft = commentViewModel.getDraftForLine(
+                                    filePath: filePath,
+                                    line: lineNumber ?? 0,
+                                    side: side
+                                )
+
+                                if existingDraft == nil {
+                                    let newDraft = commentViewModel.addDraft(
+                                        filePath: filePath,
+                                        line: lineNumber ?? 0,
+                                        side: side
+                                    )
+                                    expandedCommentLines.insert(lineIdentifier(line))
                                 }
                             }
                         }
@@ -615,7 +695,7 @@ struct InlineDiffView: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
-        .font(.system(.body, design: .monospaced))
+        .font(.system(size: fontSize, design: .monospaced))
         .background(Color(NSColor.textBackgroundColor))
     }
 }
@@ -623,12 +703,16 @@ struct InlineDiffView: View {
 struct DiffLineView: View {
     let line: DiffLine
     let commentCount: Int
+    let fontSize: CGFloat
     let onCommentToggle: () -> Void
+    let onAddComment: () -> Void
 
-    init(line: DiffLine, commentCount: Int = 0, onCommentToggle: @escaping () -> Void = {}) {
+    init(line: DiffLine, commentCount: Int = 0, fontSize: CGFloat = 13.0, onCommentToggle: @escaping () -> Void = {}, onAddComment: @escaping () -> Void = {}) {
         self.line = line
         self.commentCount = commentCount
+        self.fontSize = fontSize
         self.onCommentToggle = onCommentToggle
+        self.onAddComment = onAddComment
     }
 
     private var backgroundColor: Color? {
@@ -667,7 +751,7 @@ struct DiffLineView: View {
                 Text(line.oldLineNumber.map(String.init) ?? "")
                     .foregroundColor(.secondary.opacity(0.6))
                     .frame(width: 50, alignment: .trailing)
-                    .font(.system(.caption2, design: .monospaced))
+                    .font(.system(size: fontSize * 0.8, design: .monospaced))
 
                 // Separator
                 Rectangle()
@@ -678,14 +762,14 @@ struct DiffLineView: View {
                 Text(line.newLineNumber.map(String.init) ?? "")
                     .foregroundColor(.secondary.opacity(0.6))
                     .frame(width: 50, alignment: .trailing)
-                    .font(.system(.caption2, design: .monospaced))
+                    .font(.system(size: fontSize * 0.8, design: .monospaced))
 
                 // Separator
                 Rectangle()
                     .fill(Color.secondary.opacity(0.2))
                     .frame(width: 1)
             }
-            .frame(height: 24)
+            .frame(height: fontSize + 8)
             .background(Color(NSColor.textBackgroundColor))
 
             // Comment indicator
@@ -693,9 +777,9 @@ struct DiffLineView: View {
                 Button(action: onCommentToggle) {
                     HStack(spacing: 4) {
                         Image(systemName: "bubble.left.fill")
-                            .font(.caption2)
+                            .font(.system(size: fontSize * 0.8))
                         Text("\(commentCount)")
-                            .font(.caption2)
+                            .font(.system(size: fontSize * 0.8))
                     }
                     .foregroundColor(.blue)
                     .padding(.horizontal, 6)
@@ -706,9 +790,9 @@ struct DiffLineView: View {
                 .buttonStyle(.plain)
                 .help("\(commentCount) comment\(commentCount == 1 ? "" : "s")")
             } else {
-                Button(action: onCommentToggle) {
+                Button(action: onAddComment) {
                     Image(systemName: "plus")
-                        .font(.caption2)
+                        .font(.system(size: fontSize * 0.8))
                         .foregroundColor(.secondary.opacity(0.5))
                 }
                 .buttonStyle(.plain)
@@ -724,6 +808,7 @@ struct DiffLineView: View {
                 }
 
                 Text(displayContent)
+                    .font(.system(size: fontSize, design: .monospaced))
                     .foregroundColor(foregroundColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
@@ -733,6 +818,6 @@ struct DiffLineView: View {
             .padding(.vertical, 2)
             .background(backgroundColor ?? Color.clear)
         }
-        .frame(height: line.type == .context ? 24 : nil)
+        .frame(height: line.type == .context ? fontSize + 8 : nil)
     }
 }
