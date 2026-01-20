@@ -10,23 +10,22 @@ enum DiffLineType {
 struct DiffLine {
     let content: String
     let type: DiffLineType
-    let lineNumber: Int?
+    let oldLineNumber: Int?
+    let newLineNumber: Int?
 
-    init(content: String) {
+    init(content: String, oldLineNumber: Int? = nil, newLineNumber: Int? = nil) {
         self.content = content
+        self.oldLineNumber = oldLineNumber
+        self.newLineNumber = newLineNumber
 
         if content.hasPrefix("+") && !content.hasPrefix("+++") {
             type = .added
-            lineNumber = nil
         } else if content.hasPrefix("-") && !content.hasPrefix("---") {
             type = .removed
-            lineNumber = nil
         } else if content.hasPrefix("@@") {
             type = .header
-            lineNumber = nil
         } else {
             type = .context
-            lineNumber = nil
         }
     }
 }
@@ -394,7 +393,95 @@ struct InlineDiffView: View {
     let patch: String
 
     private var diffLines: [DiffLine] {
-        patch.components(separatedBy: "\n").map { DiffLine(content: $0) }
+        parseDiffWithLineNumbers(patch)
+    }
+
+    private func parseDiffWithLineNumbers(_ patch: String) -> [DiffLine] {
+        var lines: [DiffLine] = []
+        let patchLines = patch.components(separatedBy: "\n")
+
+        var oldLineNum: Int = 1
+        var newLineNum: Int = 1
+        var skipUntilNextHunk = false
+
+        for line in patchLines {
+            // Skip meta lines
+            if line.hasPrefix("diff --git") {
+                skipUntilNextHunk = true
+                continue
+            }
+            if line.hasPrefix("index ") {
+                continue
+            }
+            if line.hasPrefix("--- ") {
+                continue
+            }
+            if line.hasPrefix("+++ ") {
+                continue
+            }
+
+            // Parse hunk header to get line numbers
+            if line.hasPrefix("@@ ") {
+                skipUntilNextHunk = false
+
+                // Extract: @@ -oldStart,oldCount +newStart,newCount @@ optional_section
+                let range = line.dropFirst(3)
+                let components = range.components(separatedBy: " ")
+                var oldStart = oldLineNum
+                var newStart = newLineNum
+
+                for component in components {
+                    if component.hasPrefix("-") {
+                        // Format: -start,count
+                        let numStr = component.dropFirst().components(separatedBy: ",")
+                        if let start = Int(numStr[0]) {
+                            oldStart = start
+                        }
+                    } else if component.hasPrefix("+") {
+                        // Format: +start,count
+                        let numStr = component.dropFirst().components(separatedBy: ",")
+                        if let start = Int(numStr[0]) {
+                            newStart = start
+                        }
+                    } else if component.hasPrefix("@@") {
+                        break
+                    }
+                }
+
+                oldLineNum = oldStart
+                newLineNum = newStart
+
+                // Don't add hunk header to display
+                continue
+            }
+
+            // Skip everything until we hit the first hunk
+            if skipUntilNextHunk {
+                continue
+            }
+
+            // Process diff lines and track line numbers
+            var oldNum: Int?
+            var newNum: Int?
+
+            if line.hasPrefix("-") {
+                oldNum = oldLineNum
+                oldLineNum += 1
+            } else if line.hasPrefix("+") {
+                newNum = newLineNum
+                newLineNum += 1
+            } else {
+                // Context line
+                oldNum = oldLineNum
+                newNum = newLineNum
+                oldLineNum += 1
+                newLineNum += 1
+            }
+
+            lines.append(DiffLine(content: line, oldLineNumber: oldNum, newLineNumber: newNum))
+        }
+
+        return lines
     }
 
     var body: some View {
@@ -402,15 +489,11 @@ struct InlineDiffView: View {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(diffLines.enumerated()), id: \.offset) { index, line in
                     DiffLineView(line: line)
-                        .background(
-                            index % 2 == 0
-                                ? Color(NSColor.textBackgroundColor)
-                                : Color(NSColor.alternatingContentBackgroundColors[0])
-                        )
                 }
             }
         }
         .font(.system(.caption, design: .monospaced))
+        .background(Color(NSColor.textBackgroundColor))
     }
 }
 
@@ -419,37 +502,79 @@ struct DiffLineView: View {
 
     private var backgroundColor: Color? {
         switch line.type {
-        case .added: return Color.green.opacity(0.15)
-        case .removed: return Color.red.opacity(0.15)
-        case .header: return Color.blue.opacity(0.1)
+        case .added: return Color.green.opacity(0.12)
+        case .removed: return Color.red.opacity(0.12)
+        case .header: return Color.blue.opacity(0.08)
         case .context: return nil
         }
     }
 
     private var foregroundColor: Color {
         switch line.type {
-        case .added: return .green
-        case .removed: return .red
+        case .added: return Color(red: 0.13, green: 0.6, blue: 0.18)
+        case .removed: return Color(red: 0.84, green: 0.26, blue: 0.26)
         case .header: return .blue
         case .context: return .primary
         }
     }
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if let bgColor = backgroundColor {
-                Rectangle()
-                    .fill(bgColor)
-                    .frame(width: 4)
-            }
-
-            Text(line.content)
-                .foregroundColor(foregroundColor)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+    private var displayContent: String {
+        if line.type == .added {
+            String(line.content.dropFirst())
+        } else if line.type == .removed {
+            String(line.content.dropFirst())
+        } else {
+            line.content
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 2)
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            // Line number gutter
+            HStack(spacing: 8) {
+                // Old line number
+                Text(line.oldLineNumber.map(String.init) ?? "")
+                    .foregroundColor(.secondary.opacity(0.6))
+                    .frame(width: 50, alignment: .trailing)
+                    .font(.system(.caption, design: .monospaced))
+
+                // Separator
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.2))
+                    .frame(width: 1)
+
+                // New line number
+                Text(line.newLineNumber.map(String.init) ?? "")
+                    .foregroundColor(.secondary.opacity(0.6))
+                    .frame(width: 50, alignment: .trailing)
+                    .font(.system(.caption, design: .monospaced))
+
+                // Separator
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.2))
+                    .frame(width: 1)
+            }
+            .frame(height: 20)
+            .background(Color(NSColor.textBackgroundColor))
+
+            // Diff content
+            HStack(alignment: .top, spacing: 8) {
+                if let bgColor = backgroundColor {
+                    Rectangle()
+                        .fill(bgColor)
+                        .frame(width: 3)
+                }
+
+                Text(displayContent)
+                    .foregroundColor(foregroundColor)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 2)
+            .background(backgroundColor ?? Color.clear)
+        }
+        .frame(height: line.type == .context ? 20 : nil)
     }
 }
