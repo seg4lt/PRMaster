@@ -285,6 +285,7 @@ struct PRDiffView: View {
                             }
                         },
                         commitId: nil,
+                        pr: pr,
                         commentViewModel: viewModel.commentViewModel
                     )
                 }
@@ -298,6 +299,7 @@ struct FileDiffView: View {
     let isExpanded: Bool
     let onToggle: () -> Void
     var commitId: String? = nil
+    let pr: EnrichedPullRequest
     @ObservedObject var commentViewModel: ReviewCommentViewModel
 
     private var fileName: String {
@@ -364,6 +366,7 @@ struct FileDiffView: View {
                         patch: patch,
                         filePath: file.path,
                         commitId: commitId,
+                        pr: pr,
                         commentViewModel: commentViewModel
                     )
                 }
@@ -447,6 +450,7 @@ struct InlineDiffView: View {
     let patch: String
     let filePath: String
     let commitId: String?
+    let pr: EnrichedPullRequest
     @ObservedObject var commentViewModel: ReviewCommentViewModel
     @State private var expandedCommentLines = Set<String>()
 
@@ -588,7 +592,7 @@ struct InlineDiffView: View {
                             draft: draft,
                             onDraftBodyChange: { commentViewModel.updateDraft($0, body: $1) },
                             onDeleteDraft: { commentViewModel.deleteDraft($0) },
-                            onEditComment: { comment in
+                            onEditComment: { _ in
                                 // TODO: Implement comment editing
                             },
                             onDeleteComment: { comment in
