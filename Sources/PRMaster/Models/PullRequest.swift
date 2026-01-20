@@ -125,6 +125,11 @@ struct ChangedFileNodes: Codable {
 
 struct ChangedFile: Codable, Identifiable {
     let path: String
+    let additions: Int?
+    let deletions: Int?
+    let changes: Int?
+    let changeType: String?
+    let patch: String?
     var id: String { path }
 }
 

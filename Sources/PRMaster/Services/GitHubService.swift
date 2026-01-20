@@ -191,6 +191,54 @@ actor GitHubService {
         return results[number]
     }
 
+    func fetchPRDiff(owner: String, repo: String, number: Int) async throws -> PRDetail? {
+        let start = Date()
+        let command = "graphql diff \(repo):#\(number)"
+
+        let prFragment = """
+              headRefName
+              baseRefName
+              files(first: 100) {
+                nodes {
+                  path
+                  additions
+                  deletions
+                  changes
+                  changeType
+                  patch
+                }
+              }
+        """
+
+        let query = """
+        query {
+          repository(owner: "\(owner)", name: "\(repo)") {
+            pullRequest(number: \(number)) {
+              \(prFragment)
+            }
+          }
+        }
+        """
+
+        do {
+            let json = try await withRetry {
+                try await shell.executeGH([
+                    "api", "graphql",
+                    "-f", "query=\(query)"
+                ])
+            }
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            guard !json.isEmpty else { return nil }
+
+            let response = try decoder.decode(PRDetailResponse.self, from: Data(json.utf8))
+            return response.data.repository?.pullRequest
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
     func fetchPRDetailsBatch(owner: String, repo: String, numbers: [Int]) async throws -> [Int: PRDetail] {
         guard !numbers.isEmpty else { return [:] }
 

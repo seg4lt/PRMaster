@@ -132,14 +132,12 @@ class ReviewWindowController: NSObject, NSWindowDelegate {
         // CRITICAL: Change activation policy to allow showing windows
         NSApp.setActivationPolicy(.regular)
 
-        // Create a blank SwiftUI view for now
-        let contentView = Text("Review PR")
-            .font(.title)
-            .frame(minWidth: 800, minHeight: 600)
+        // Create the PR diff view
+        let contentView = PRDiffView(pr: pr)
 
-        // Create the window
+        // Create window
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
+            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
