@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 struct APICallLog: Identifiable {
     let id = UUID()
@@ -20,17 +21,30 @@ actor GitHubService {
     private(set) var callLogs: [APICallLog] = []
     private let maxLogEntries = 100
 
+    // SwiftData container for repository paths
+    var modelContainer: ModelContainer?
+
     private init() {
         decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
     }
 
-    private var _cachedRepoPaths: [RepositoryLocalPath] = []
-
     private func getLocalPathForRepo(owner: String, repo: String) -> URL? {
         let repoKey = "\(owner)/\(repo)"
 
-        guard let foundPath = _cachedRepoPaths.first(where: { $0.id == repoKey })?.localPath else {
+        guard let container = modelContainer else {
+            print("[GitHubService] ❌ ModelContainer not set for repository paths")
+            return nil
+        }
+
+        let context = ModelContext(container)
+        let descriptor = FetchDescriptor<RepositoryLocalPath>()
+        guard let repoPaths = try? context.fetch(descriptor) else {
+            print("[GitHubService] ❌ Failed to fetch repository paths")
+            return nil
+        }
+
+        guard let foundPath = repoPaths.first(where: { $0.id == repoKey })?.localPath else {
             print("[GitHubService] ❌ No match found for '\(repoKey)' in cached paths")
             return nil
         }

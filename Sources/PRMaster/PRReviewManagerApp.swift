@@ -243,7 +243,7 @@ struct PRReviewManagerApp: App {
             let directoryURL = appSupportURL.appendingPathComponent(appName)
             let fileURL = directoryURL.appendingPathComponent("prmaster.store")
             try fileManager.createDirectory (at: directoryURL, withIntermediateDirectories: true, attributes: nil)
-            let schema = Schema([NotificationFilter.self]);
+            let schema = Schema([NotificationFilter.self, RepositoryLocalPath.self]);
             let modelConfig = ModelConfiguration(appName, schema: schema, url: fileURL)
             modelContainer = try ModelContainer(for: schema, configurations: modelConfig)
         } catch {
@@ -252,6 +252,12 @@ struct PRReviewManagerApp: App {
 
         // Set model container on ViewModel so it can fetch filters directly
         PRListViewModel.shared.modelContainer = modelContainer
+
+        // Set model container on GitHubService so it can fetch repository paths
+        let githubContainer = modelContainer
+        Task {
+            await GitHubService.shared.modelContainer = githubContainer
+        }
 
         // Fetch data on app start
         Task {

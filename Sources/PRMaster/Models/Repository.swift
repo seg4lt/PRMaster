@@ -23,9 +23,13 @@ struct Repository: Codable, Identifiable, Hashable {
     }
 }
 
-struct RepositoryLocalPath: Codable, Identifiable, Hashable {
-    let id: String
-    let localPath: String
+import Foundation
+import SwiftData
+
+@Model
+final class RepositoryLocalPath {
+    var id: String
+    var localPath: String
 
     init(nameWithOwner: String, localPath: String) {
         self.id = nameWithOwner

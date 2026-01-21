@@ -1,17 +1,14 @@
 import SwiftUI
 import AppKit
+import SwiftData
 
 struct RepositoryPathsSection: View {
-    var repoLocalPaths: [RepositoryLocalPath]
-    var onSave: ([RepositoryLocalPath]) -> Void
+    @Query private var repoLocalPaths: [RepositoryLocalPath]
+    @Environment(\.modelContext) private var modelContext
 
-    @State private var editingPaths: [RepositoryLocalPath] = []
     @State private var showAddSheet = false
 
-    init(repoLocalPaths: [RepositoryLocalPath], onSave: @escaping ([RepositoryLocalPath]) -> Void) {
-        self.repoLocalPaths = repoLocalPaths
-        self.onSave = onSave
-    }
+    init() {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -23,24 +20,20 @@ struct RepositoryPathsSection: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
 
-            if editingPaths.isEmpty {
+            if repoLocalPaths.isEmpty {
                 emptyStateView
             } else {
                 VStack(spacing: 8) {
-                    ForEach(Array(editingPaths.enumerated()), id: \.element.id) { index, repoPath in
+                    ForEach(repoLocalPaths) { repoPath in
                         RepositoryPathRow(
                             repoPath: repoPath,
                             onUpdate: { newPath in
-                                if editingPaths.indices.contains(index) {
-                                    editingPaths[index] = RepositoryLocalPath(nameWithOwner: repoPath.id, localPath: newPath)
-                                    onSave(editingPaths)
-                                }
+                                repoPath.localPath = newPath
+                                try? modelContext.save()
                             },
                             onDelete: {
-                                if editingPaths.indices.contains(index) {
-                                    editingPaths.remove(at: index)
-                                    onSave(editingPaths)
-                                }
+                                modelContext.delete(repoPath)
+                                try? modelContext.save()
                             }
                         )
                     }
@@ -53,16 +46,7 @@ struct RepositoryPathsSection: View {
             }
         }
         .sheet(isPresented: $showAddSheet) {
-            AddRepositoryPathSheet(
-                existingPaths: editingPaths,
-                onSave: { newPath in
-                    editingPaths.append(newPath)
-                    onSave(editingPaths)
-                }
-            )
-        }
-        .onAppear {
-            editingPaths = repoLocalPaths
+            AddRepositoryPathSheet()
         }
     }
 
@@ -200,10 +184,10 @@ struct RepositoryPathRow: View {
 }
 
 struct AddRepositoryPathSheet: View {
-    let existingPaths: [RepositoryLocalPath]
-    var onSave: (RepositoryLocalPath) -> Void
-
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Query private var repoLocalPaths: [RepositoryLocalPath]
+
     @State private var selectedRepo = ""
     @State private var localPath = ""
     @State private var showFolderPicker = false
@@ -290,7 +274,8 @@ struct AddRepositoryPathSheet: View {
                             nameWithOwner: selectedRepo,
                             localPath: localPath
                         )
-                        onSave(newPath)
+                        modelContext.insert(newPath)
+                        try? modelContext.save()
                         dismiss()
                     }
                 }
@@ -305,7 +290,7 @@ struct AddRepositoryPathSheet: View {
     private func loadRepos() async {
         do {
             let repos = try await GitHubService.shared.fetchAccessibleRepos()
-            let existingIds = Set(existingPaths.map { $0.id })
+            let existingIds = Set(repoLocalPaths.map { $0.id })
             availableRepos = repos.filter { !existingIds.contains($0) }
         } catch {
             print("[RepositoryPathsSection] Failed to load repos: \(error)")
