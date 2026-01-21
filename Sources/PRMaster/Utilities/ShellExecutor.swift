@@ -26,12 +26,13 @@ actor ShellExecutor {
         print("[ShellExecutor] Executing: \(command) \(arguments.joined(separator: " ")) in \(workingDirectory?.path ?? "temp") with timeout: \(timeout)s, disablePager=\(disablePager)")
 
         let process = Process()
-        let pipe = Pipe()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
 
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [command] + arguments
-        process.standardOutput = pipe
-        process.standardError = pipe
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
 
         // Use provided working directory or fallback to temp
         process.currentDirectoryURL = workingDirectory ?? FileManager.default.temporaryDirectory
@@ -46,6 +47,7 @@ actor ShellExecutor {
             env["GH_PAGER"] = "cat"
             env["PAGER"] = "cat"
             env["LESS"] = "-FRX"
+            env["NO_COLOR"] = "1"
         }
 
         let additionalPaths = [
@@ -71,31 +73,58 @@ actor ShellExecutor {
             throw ShellError.commandNotFound(command)
         }
 
+        // Read output asynchronously to prevent buffer blocking
+        let outputTask = Task {
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            return String(data: data, encoding: .utf8) ?? ""
+        }
+
+        let errorTask = Task {
+            let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            return String(data: data, encoding: .utf8) ?? ""
+        }
+
         // Wait for process with timeout
         let startTime = Date()
         while process.isRunning {
             let elapsed = Date().timeIntervalSince(startTime)
             if elapsed > timeout {
                 process.terminate()
+                outputTask.cancel()
+                errorTask.cancel()
                 print("[ShellExecutor] ❌ Command timed out after \(elapsed)s")
                 throw ShellError.timeout(timeout)
             }
             try await Task.sleep(nanoseconds: 100_000_000) // 0.1 second
         }
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
-        let elapsedTime = Date().timeIntervalSince(startTime)
+        let output: String
+        let errorOutput: String
 
-        print("[ShellExecutor] ✓ Process completed in \(String(format: "%.2f", elapsedTime))s with exit code \(process.terminationStatus)")
-        print("[ShellExecutor] Output size: \(output.count) bytes")
-
-        if process.terminationStatus != 0 {
-            print("[ShellExecutor] ❌ Command failed with output: \(output)")
-            throw ShellError.commandFailed(output, process.terminationStatus)
+        do {
+            output = try await outputTask.value
+        } catch {
+            output = ""
         }
 
-        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            errorOutput = try await errorTask.value
+        } catch {
+            errorOutput = ""
+        }
+
+        let elapsedTime = Date().timeIntervalSince(startTime)
+
+        let fullOutput = output + errorOutput
+        print("[ShellExecutor] ✓ Process completed in \(String(format: "%.2f", elapsedTime))s with exit code \(process.terminationStatus)")
+        print("[ShellExecutor] Output size: \(fullOutput.count) bytes")
+
+        if process.terminationStatus != 0 {
+            print("[ShellExecutor] ❌ Command failed with output: \(fullOutput)")
+            throw ShellError.commandFailed(fullOutput, process.terminationStatus)
+        }
+
+        return fullOutput.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
     }
 
     func executeGH(_ arguments: [String], timeout: TimeInterval = 60, workingDirectory: URL? = nil, disablePager: Bool = false) async throws -> String {
