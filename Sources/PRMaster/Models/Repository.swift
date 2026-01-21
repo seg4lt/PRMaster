@@ -22,3 +22,23 @@ struct Repository: Codable, Identifiable, Hashable {
         return ""
     }
 }
+
+struct RepositoryLocalPath: Codable, Identifiable, Hashable {
+    let id: String
+    let localPath: String
+
+    init(nameWithOwner: String, localPath: String) {
+        self.id = nameWithOwner
+        self.localPath = localPath
+    }
+
+    var nameWithOwner: String { id }
+
+    var shortName: String {
+        let parts = id.split(separator: "/")
+        if parts.count == 2 {
+            return String(parts[1])
+        }
+        return id
+    }
+}

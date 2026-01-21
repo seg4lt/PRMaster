@@ -25,6 +25,18 @@ actor GitHubService {
         decoder.dateDecodingStrategy = .iso8601
     }
 
+    private func getLocalPathForRepo(owner: String, repo: String) -> URL? {
+        let repoKey = "\(owner)/\(repo)"
+
+        guard let data = UserDefaults.standard.data(forKey: "repositoryLocalPaths"),
+              let paths = try? JSONDecoder().decode([RepositoryLocalPath].self, from: data),
+              let repoPath = paths.first(where: { $0.id == repoKey })?.localPath else {
+            return nil
+        }
+
+        return URL(fileURLWithPath: repoPath)
+    }
+
     private func withRetry<T>(
         maxAttempts: Int = 3,
         initialDelay: TimeInterval = 1.0,
@@ -564,14 +576,15 @@ actor GitHubService {
     /// Fetch full diff for a pull request
     func fetchPRDiffRaw(owner: String, repo: String, number: Int) async throws -> String {
         let start = Date()
-        let command = "gh pr diff \(number) --repo \(owner)/\(repo)"
+        let command = "gh pr diff \(number)"
+
+        let workingDir = getLocalPathForRepo(owner: owner, repo: repo)
 
         do {
-            // Use gh pr diff command instead of REST API - much faster
+            // Use gh pr diff command from local directory if configured
             let diff = try await shell.executeGH([
-                "pr", "diff", "\(number)",
-                "--repo", "\(owner)/\(repo)"
-            ], timeout: 120)
+                "pr", "diff", "\(number)"
+            ], timeout: 120, workingDirectory: workingDir)
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
             return filterDiff(diff)
         } catch {
@@ -583,14 +596,19 @@ actor GitHubService {
     /// Fetch diff for a single commit
     func fetchCommitDiff(repo: String, sha: String) async throws -> String {
         let start = Date()
-        let command = "gh diff \(sha.prefix(7)) --repo \(repo)"
+        let command = "gh diff \(sha.prefix(7))"
+
+        let parts = repo.components(separatedBy: "/")
+        let owner = parts.count > 1 ? String(parts.dropLast().joined(separator: "/")) : ""
+        let repoName = parts.last ?? repo
+
+        let workingDir = getLocalPathForRepo(owner: owner, repo: repoName)
 
         do {
-            // Use gh diff command instead of REST API - much faster
+            // Use gh diff command from local directory if configured
             let diff = try await shell.executeGH([
-                "diff", "\(sha.prefix(7))",
-                "--repo", repo
-            ], timeout: 60)
+                "diff", "\(sha.prefix(7))"
+            ], timeout: 60, workingDirectory: workingDir)
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
             return filterDiff(diff)
         } catch {

@@ -22,7 +22,7 @@ actor ShellExecutor {
 
     private init() {}
 
-    func execute(_ command: String, arguments: [String] = [], timeout: TimeInterval = 30) async throws -> String {
+    func execute(_ command: String, arguments: [String] = [], timeout: TimeInterval = 30, workingDirectory: URL? = nil) async throws -> String {
         let process = Process()
         let pipe = Pipe()
 
@@ -31,8 +31,8 @@ actor ShellExecutor {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        // Set working directory to temp to avoid permission dialogs
-        process.currentDirectoryURL = FileManager.default.temporaryDirectory
+        // Use provided working directory or fallback to temp
+        process.currentDirectoryURL = workingDirectory ?? FileManager.default.temporaryDirectory
 
         // Add common binary paths for GUI apps launched from Finder
         var env = ProcessInfo.processInfo.environment
@@ -80,7 +80,7 @@ actor ShellExecutor {
         return output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func executeGH(_ arguments: [String], timeout: TimeInterval = 60) async throws -> String {
-        try await execute("gh", arguments: arguments, timeout: timeout)
+    func executeGH(_ arguments: [String], timeout: TimeInterval = 60, workingDirectory: URL? = nil) async throws -> String {
+        try await execute("gh", arguments: arguments, timeout: timeout, workingDirectory: workingDirectory)
     }
 }

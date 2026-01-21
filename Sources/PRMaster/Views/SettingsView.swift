@@ -13,6 +13,7 @@ struct SettingsView: View {
     @AppStorage("aiProvider") private var selectedProvider: String = AIProviderType.claude.rawValue
     @AppStorage("aiModel") private var selectedModel: String = AIProviderType.claude.defaultModel
     @AppStorage("tokenRatio") private var tokenRatio: Int = 2
+    @AppStorage("repositoryLocalPaths") private var repositoryLocalPathsJSON: String = "[]"
     @Query private var savedFilters: [NotificationFilter]
 
     @StateObject private var viewModel = SettingsViewModel.shared
@@ -21,10 +22,21 @@ struct SettingsView: View {
         (try? JSONDecoder().decode([BadgeSourceConfig].self, from: Data(badgeConfigJSON.utf8))) ?? []
     }
 
+    private var repoLocalPaths: [RepositoryLocalPath] {
+        (try? JSONDecoder().decode([RepositoryLocalPath].self, from: Data(repositoryLocalPathsJSON.utf8))) ?? []
+    }
+
     private func saveBadgeConfigs(_ configs: [BadgeSourceConfig]) {
         if let data = try? JSONEncoder().encode(configs),
            let json = String(data: data, encoding: .utf8) {
             badgeConfigJSON = json
+        }
+    }
+
+    private func saveRepoPaths(_ paths: [RepositoryLocalPath]) {
+        if let data = try? JSONEncoder().encode(paths),
+           let json = String(data: data, encoding: .utf8) {
+            repositoryLocalPathsJSON = json
         }
     }
 
@@ -84,6 +96,13 @@ struct SettingsView: View {
                 Divider()
 
                 badgeSection
+
+                Divider()
+
+                RepositoryPathsSection(
+                    repoLocalPaths: repoLocalPaths,
+                    onSave: saveRepoPaths
+                )
 
                 Divider()
 
