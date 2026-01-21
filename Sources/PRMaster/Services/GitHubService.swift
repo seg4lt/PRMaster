@@ -564,15 +564,14 @@ actor GitHubService {
     /// Fetch full diff for a pull request
     func fetchPRDiffRaw(owner: String, repo: String, number: Int) async throws -> String {
         let start = Date()
-        let command = "diff \(repo):#\(number)"
+        let command = "gh pr diff \(number) --repo \(owner)/\(repo)"
 
         do {
-            let diff = try await withRetry {
-                try await shell.executeGH([
-                    "api", "repos/\(owner)/\(repo)/pulls/\(number)",
-                    "-H", "Accept: application/vnd.github.diff"
-                ])
-            }
+            // Use gh pr diff command instead of REST API - much faster
+            let diff = try await shell.executeGH([
+                "pr", "diff", "\(number)",
+                "--repo", "\(owner)/\(repo)"
+            ], timeout: 120)
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
             return filterDiff(diff)
         } catch {
@@ -584,15 +583,14 @@ actor GitHubService {
     /// Fetch diff for a single commit
     func fetchCommitDiff(repo: String, sha: String) async throws -> String {
         let start = Date()
-        let command = "diff \(repo.components(separatedBy: "/").last ?? repo):\(sha.prefix(7))"
+        let command = "gh diff \(sha.prefix(7)) --repo \(repo)"
 
         do {
-            let diff = try await withRetry {
-                try await shell.executeGH([
-                    "api", "repos/\(repo)/commits/\(sha)",
-                    "-H", "Accept: application/vnd.github.diff"
-                ])
-            }
+            // Use gh diff command instead of REST API - much faster
+            let diff = try await shell.executeGH([
+                "diff", "\(sha.prefix(7))",
+                "--repo", repo
+            ], timeout: 60)
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
             return filterDiff(diff)
         } catch {
