@@ -25,10 +25,18 @@ actor GitHubService {
         decoder.dateDecodingStrategy = .iso8601
     }
 
+    private var _cachedRepoPaths: [RepositoryLocalPath] = []
+
     private func getLocalPathForRepo(owner: String, repo: String) -> URL? {
         let repoKey = "\(owner)/\(repo)"
 
-        return cachedRepoPaths.first(where: { $0.id == repoKey })?.localPath
+        guard let foundPath = _cachedRepoPaths.first(where: { $0.id == repoKey })?.localPath else {
+            print("[GitHubService] ❌ No match found for '\(repoKey)' in cached paths")
+            return nil
+        }
+
+        print("[GitHubService] ✅ Found local path for \(repoKey): \(foundPath)")
+        return URL(fileURLWithPath: foundPath)
     }
 
     private func withRetry<T>(
