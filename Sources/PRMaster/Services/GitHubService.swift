@@ -408,13 +408,18 @@ actor GitHubService {
             // Fetch org repos
             let orgs = try await fetchUserOrganizations()
             for org in orgs {
-                let orgOutput = try await shell.executeGH([
-                    "repo", "list", org,
-                    "--limit", "1000",
-                    "--json", "nameWithOwner",
-                    "--jq", ".[].nameWithOwner"
-                ])
-                allRepos.append(contentsOf: orgOutput.components(separatedBy: "\n").filter { !$0.isEmpty })
+                do {
+                    let orgOutput = try await shell.executeGH([
+                        "repo", "list", org,
+                        "--limit", "1000",
+                        "--json", "nameWithOwner",
+                        "--jq", ".[].nameWithOwner"
+                    ])
+                    allRepos.append(contentsOf: orgOutput.components(separatedBy: "\n").filter { !$0.isEmpty })
+                } catch {
+                    // Log warning but continue with other orgs (e.g., IP allow list restrictions)
+                    print("Warning: Could not fetch repos for org '\(org)': \(error.localizedDescription)")
+                }
             }
 
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)

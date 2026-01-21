@@ -88,6 +88,7 @@ struct RepoListPicker: View {
             .frame(height: height)
             .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            .id(searchText) // Force re-render when search text changes
         }
     }
 }

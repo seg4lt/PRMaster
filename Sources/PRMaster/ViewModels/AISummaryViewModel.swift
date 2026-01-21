@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 @MainActor
 class AISummaryViewModel: ObservableObject {
@@ -26,6 +27,7 @@ class AISummaryViewModel: ObservableObject {
     private let generator = SummaryGenerator()
 
     private var hasCheckedProvider = false
+    private var cancellables = Set<AnyCancellable>()
 
     init() {
         let calendar = Calendar.current
@@ -35,6 +37,13 @@ class AISummaryViewModel: ObservableObject {
 
         // Load cached summaries
         summaries = AISummaryCacheService.loadSummaries()
+
+        // Forward repoManager changes to trigger view updates
+        repoManager.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
     }
 
     private var generatorCallbacks: SummaryGeneratorCallbacks {

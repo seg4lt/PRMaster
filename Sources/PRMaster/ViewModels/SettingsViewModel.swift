@@ -19,6 +19,10 @@ class SettingsViewModel: ObservableObject {
     @Published var aiProviderStatus: AIProviderStatus = .notInstalled(message: "Checking...")
     @Published var copilotModels: [String] = []
     @Published var isLoadingModels = false
+    @Published var isRefreshingRepoCache = false
+    @Published var repoCacheError: String?
+    
+    private let repoManager = RepoManager()
 
     // MARK: - GitHub Status
 
@@ -94,5 +98,38 @@ class SettingsViewModel: ObservableObject {
         } catch {
             print("Failed to set launch at login: \(error)")
         }
+    }
+
+    // MARK: - Repository Cache
+
+    func refreshRepoCache() async {
+        isRefreshingRepoCache = true
+        repoCacheError = nil
+        
+        await repoManager.reloadRepos()
+        
+        if let error = repoManager.error {
+            repoCacheError = error
+        }
+        
+        isRefreshingRepoCache = false
+    }
+
+    func getRepoCacheAge() -> String? {
+        guard let cacheDate = UserDefaults.standard.object(forKey: "cachedReposDate") as? Date else {
+            return nil
+        }
+        
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: cacheDate, relativeTo: Date())
+    }
+
+    var cachedRepoCount: Int {
+        guard let data = UserDefaults.standard.data(forKey: "cachedRepos"),
+              let repos = try? JSONDecoder().decode([String].self, from: data) else {
+            return 0
+        }
+        return repos.count
     }
 }

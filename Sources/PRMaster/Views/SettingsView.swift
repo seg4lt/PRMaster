@@ -96,6 +96,10 @@ struct SettingsView: View {
 
                 Divider()
 
+                DataSection(viewModel: viewModel)
+
+                Divider()
+
                 Button("Quit PRMaster") {
                     NSApplication.shared.terminate(nil)
                 }
