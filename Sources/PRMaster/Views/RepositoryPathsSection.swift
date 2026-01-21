@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct RepositoryPathsSection: View {
     var repoLocalPaths: [RepositoryLocalPath]
@@ -30,14 +31,16 @@ struct RepositoryPathsSection: View {
                         RepositoryPathRow(
                             repoPath: repoPath,
                             onUpdate: { newPath in
-                                var updatedPaths = editingPaths
-                                updatedPaths[index] = RepositoryLocalPath(nameWithOwner: repoPath.id, localPath: newPath)
-                                onSave(updatedPaths)
+                                if editingPaths.indices.contains(index) {
+                                    editingPaths[index] = RepositoryLocalPath(nameWithOwner: repoPath.id, localPath: newPath)
+                                    onSave(editingPaths)
+                                }
                             },
                             onDelete: {
-                                var updatedPaths = editingPaths
-                                updatedPaths.remove(at: index)
-                                onSave(updatedPaths)
+                                if editingPaths.indices.contains(index) {
+                                    editingPaths.remove(at: index)
+                                    onSave(editingPaths)
+                                }
                             }
                         )
                     }
@@ -97,6 +100,7 @@ struct RepositoryPathRow: View {
 
     @State private var localPath: String
     @State private var showPicker = false
+    @State private var isValid: Bool = true
 
     init(repoPath: RepositoryLocalPath, onUpdate: @escaping (String) -> Void, onDelete: @escaping () -> Void) {
         self.repoPath = repoPath
@@ -107,8 +111,8 @@ struct RepositoryPathRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "folder.fill")
-                .foregroundColor(.blue)
+            Image(systemName: isValid ? "folder.fill" : "exclamationmark.triangle.fill")
+                .foregroundColor(isValid ? .blue : .orange)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -117,10 +121,18 @@ struct RepositoryPathRow: View {
                     .fontWeight(.medium)
 
                 if !localPath.isEmpty {
-                    Text(localPath)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(localPath)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+
+                        if !isValid {
+                            Text("Not a git repository")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
                 }
             }
 
@@ -145,11 +157,23 @@ struct RepositoryPathRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                .stroke(isValid ? Color.secondary.opacity(0.2) : Color.orange.opacity(0.5), lineWidth: 1)
         )
         .onAppear {
             localPath = repoPath.localPath
+            isValid = isValidGitRepository(localPath)
         }
+        .onChange(of: localPath) { _, newPath in
+            isValid = isValidGitRepository(newPath)
+            onUpdate(newPath)
+        }
+    }
+
+    private func isValidGitRepository(_ path: String) -> Bool {
+        guard !path.isEmpty else { return true }
+        let gitDir = URL(fileURLWithPath: path)
+            .appendingPathComponent(".git")
+        return FileManager.default.fileExists(atPath: gitDir.path)
     }
 
     private func showNativeFolderPicker() {
@@ -160,8 +184,17 @@ struct RepositoryPathRow: View {
         panel.directoryURL = URL(fileURLWithPath: localPath)
 
         if panel.runModal() == .OK, let url = panel.directoryURL {
-            localPath = url.path
-            onUpdate(localPath)
+            if isValidGitRepository(url.path) {
+                localPath = url.path
+                onUpdate(localPath)
+            } else {
+                let alert = NSAlert()
+                alert.messageText = "Not a git repository"
+                alert.informativeText = "The selected folder is not a git repository. Please select the root directory of a git repository (a folder containing a .git folder)."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
         }
     }
 }
@@ -175,6 +208,13 @@ struct AddRepositoryPathSheet: View {
     @State private var localPath = ""
     @State private var showFolderPicker = false
     @State private var availableRepos: [String] = []
+
+    private func isValidGitRepository(_ path: String) -> Bool {
+        guard !path.isEmpty else { return true }
+        let gitDir = URL(fileURLWithPath: path)
+            .appendingPathComponent(".git")
+        return FileManager.default.fileExists(atPath: gitDir.path)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -219,15 +259,7 @@ struct AddRepositoryPathSheet: View {
                         .textFieldStyle(.roundedBorder)
 
                     Button("Browse") {
-                        let panel = NSOpenPanel()
-                        panel.canChooseDirectories = true
-                        panel.canChooseFiles = false
-                        panel.allowsMultipleSelection = false
-                        panel.directoryURL = URL(fileURLWithPath: localPath)
-
-                        if panel.runModal() == .OK, let url = panel.directoryURL {
-                            localPath = url.path
-                        }
+                        showNativeFolderPicker()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -244,6 +276,16 @@ struct AddRepositoryPathSheet: View {
 
                 Button("Save") {
                     if !selectedRepo.isEmpty && !localPath.isEmpty {
+                        guard isValidGitRepository(localPath) else {
+                            let alert = NSAlert()
+                            alert.messageText = "Not a git repository"
+                            alert.informativeText = "The path '\(localPath)' is not a git repository. Please select a folder that contains a .git directory."
+                            alert.alertStyle = .warning
+                            alert.addButton(withTitle: "OK")
+                            alert.runModal()
+                            return
+                        }
+
                         let newPath = RepositoryLocalPath(
                             nameWithOwner: selectedRepo,
                             localPath: localPath
@@ -258,14 +300,6 @@ struct AddRepositoryPathSheet: View {
         }
         .padding(24)
         .frame(width: 500, height: 350)
-        .fileImporter(
-            isPresented: $showFolderPicker,
-            allowedContentTypes: [.folder]
-        ) { result in
-            if case .success(let url) = result {
-                localPath = url.path
-            }
-        }
     }
 
     private func loadRepos() async {
@@ -275,6 +309,27 @@ struct AddRepositoryPathSheet: View {
             availableRepos = repos.filter { !existingIds.contains($0) }
         } catch {
             print("[RepositoryPathsSection] Failed to load repos: \(error)")
+        }
+    }
+
+    private func showNativeFolderPicker() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: localPath)
+
+        if panel.runModal() == .OK, let url = panel.directoryURL {
+            if isValidGitRepository(url.path) {
+                localPath = url.path
+            } else {
+                let alert = NSAlert()
+                alert.messageText = "Not a git repository"
+                alert.informativeText = "The selected folder is not a git repository. Please select the root directory of a git repository (a folder containing a .git folder)."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
         }
     }
 }
