@@ -1,5 +1,12 @@
 import SwiftUI
 
+private struct ViewportWidthPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 enum DiffLineType {
     case added
     case removed
@@ -41,7 +48,8 @@ class PRDiffViewModel: ObservableObject {
     @Published var error: String?
     @Published var files: [ChangedFile] = []
     @Published var commentViewModel: ReviewCommentViewModel
-    @Published var parsedDiffLines: [String: [DiffLine]] = [:]
+
+    private var parsedDiffLinesCache: [String: [DiffLine]] = [:]
 
     private let pr: EnrichedPullRequest
 
@@ -56,22 +64,43 @@ class PRDiffViewModel: ObservableObject {
     }
 
     func getDiffLines(for file: ChangedFile) -> [DiffLine] {
-        if parsedDiffLines[file.path] == nil, let patch = file.patch {
-            // Cache parsed lines to avoid re-parsing on every render
-            parsedDiffLines[file.path] = parseDiffWithLineNumbers(patch, filePath: file.path)
+        parsedDiffLinesCache[file.path] ?? []
+    }
+
+    private func rebuildParsedDiffLinesCache(from files: [ChangedFile]) {
+        var newCache: [String: [DiffLine]] = [:]
+        for file in files {
+            guard let patch = file.patch else { continue }
+            newCache[file.path] = parseDiffWithLineNumbers(patch, filePath: file.path)
         }
-        return parsedDiffLines[file.path] ?? []
+        parsedDiffLinesCache = newCache
     }
 
     func loadDiff() async {
         print("[PRMaster] Starting diff load for PR \(pr.pr.repository.nameWithOwner)#\(pr.pr.number)")
         isLoading = true
         error = nil
-        parsedDiffLines.removeAll()
+        parsedDiffLinesCache.removeAll()
 
         let startTime = Date()
 
         do {
+            // Step 0: Try cache (skip network + parsing)
+            if let cachedFiles = await DiffCacheService.shared.loadDiff(for: pr) {
+                print("[PRMaster] ✓ Using cached diff for \(pr.pr.repository.nameWithOwner)#\(pr.pr.number) (\(cachedFiles.count) files)")
+                self.files = cachedFiles
+                rebuildParsedDiffLinesCache(from: cachedFiles)
+
+                print("[PRMaster] Step 1: Loading comments...")
+                updateCommentFilePaths()
+                await commentViewModel.loadComments()
+                print("[PRMaster] ✓ Comments loaded")
+
+                isLoading = false
+                isInitialLoad = false
+                return
+            }
+
             // Step 1: Fetch file metadata via GraphQL
             print("[PRMaster] Step 1: Fetching file metadata...")
             let metadataStart = Date()
@@ -113,6 +142,8 @@ class PRDiffViewModel: ObservableObject {
             print("[PRMaster] ✓ Diff parsed in \(String(format: "%.2f", parseTime))s")
 
             self.files = files
+            rebuildParsedDiffLinesCache(from: files)
+            await DiffCacheService.shared.saveDiff(for: pr, files: files)
             print("[PRMaster] ✓ Updated files array with \(files.count) files")
 
             // Step 5: Load comments
@@ -263,6 +294,7 @@ struct PRDiffView: View {
     @StateObject private var viewModel: PRDiffViewModel
     @State private var expandedFiles = Set<String>()
     @State private var showReviewPanel: Bool = false
+    @State private var hasRequestedPreview: Bool = false
     @State private var fontSize: CGFloat {
         didSet {
             UserDefaults.standard.set(fontSize, forKey: "diffFontSize")
@@ -287,9 +319,11 @@ struct PRDiffView: View {
         VStack(spacing: 0) {
             headerView
 
-            if viewModel.isInitialLoad && viewModel.isLoading {
+            if !hasRequestedPreview {
+                previewPromptView
+            } else if viewModel.isInitialLoad && viewModel.isLoading {
                 skeletonDiffView
-            } else if let error = viewModel.error {
+            } else if viewModel.error != nil {
                 errorView
             } else if viewModel.files.isEmpty {
                 emptyView
@@ -311,17 +345,19 @@ struct PRDiffView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task {
-            print("[PRMaster] View task triggered - isInitialLoad=\(viewModel.isInitialLoad), isLoading=\(viewModel.isLoading), files.count=\(viewModel.files.count)")
-            if viewModel.files.isEmpty && !viewModel.isLoading {
-                await viewModel.loadDiff()
-            }
-        }
         .sheet(isPresented: $showReviewPanel) {
             ReviewSubmissionPanel(
                 commentViewModel: viewModel.commentViewModel,
                 pr: pr
             )
+        }
+    }
+
+    private func startPreview() {
+        guard !viewModel.isLoading else { return }
+        hasRequestedPreview = true
+        Task {
+            await viewModel.loadDiff()
         }
     }
 
@@ -344,7 +380,14 @@ struct PRDiffView: View {
 
             Spacer()
 
-            if !viewModel.isLoading && !viewModel.files.isEmpty {
+            if !hasRequestedPreview {
+                Button(action: startPreview) {
+                    Label("Preview PR", systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(viewModel.isLoading)
+            } else if !viewModel.isLoading && !viewModel.files.isEmpty {
                 HStack(spacing: 12) {
                     HStack(spacing: 4) {
                         Button(action: decreaseFontSize) {
@@ -399,6 +442,31 @@ struct PRDiffView: View {
         .background(Color(NSColor.controlBackgroundColor))
     }
 
+    private var previewPromptView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 44))
+                .foregroundStyle(.secondary)
+
+            Text("Preview required")
+                .font(.headline)
+
+            Text("Click Preview PR to load the diff and comments. Cached diffs will open instantly.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+
+            Button(action: startPreview) {
+                Label("Preview PR", systemImage: "play.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+
     private var loadingView: some View {
         VStack {
             Spacer()
@@ -437,6 +505,7 @@ struct PRDiffView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button("Retry") {
+                hasRequestedPreview = true
                 Task {
                     await viewModel.loadDiff()
                 }
@@ -652,14 +721,11 @@ struct InlineDiffView: View {
     @ObservedObject var diffViewModel: PRDiffViewModel
     @ObservedObject var commentViewModel: ReviewCommentViewModel
 
-    private var filePath: String {
-        file.path
-    }
+    private var filePath: String { file.path }
+    private var patch: String? { file.patch }
 
-    private var patch: String? {
-        file.patch
-    }
     @State private var expandedCommentLines = Set<String>()
+    @State private var viewportWidth: CGFloat = 0
 
     private var diffLines: [DiffLine] {
         diffViewModel.getDiffLines(for: file)
@@ -673,7 +739,7 @@ struct InlineDiffView: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(diffLines.enumerated()), id: \.offset) { index, line in
+                ForEach(Array(diffLines.enumerated()), id: \.offset) { _, line in
                     let side: CommentSide = line.type == .removed ? .left : .right
                     let lineNumber = line.type == .removed ? line.oldLineNumber : line.newLineNumber
                     let comments = commentViewModel.getCommentsForLine(
@@ -689,90 +755,99 @@ struct InlineDiffView: View {
                     let hasComments = !comments.isEmpty || draft != nil
 
                     VStack(alignment: .leading, spacing: 0) {
-                    DiffLineView(
-                        line: line,
-                        commentCount: comments.count,
-                        fontSize: fontSize,
-                        onCommentToggle: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                let identifier = lineIdentifier(line)
-                                let existingDraft = commentViewModel.getDraftForLine(
-                                    filePath: filePath,
-                                    line: lineNumber ?? 0,
-                                    side: side
-                                )
+                        DiffLineView(
+                            line: line,
+                            commentCount: comments.count,
+                            fontSize: fontSize,
+                            onCommentToggle: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    let identifier = lineIdentifier(line)
+                                    let existingDraft = commentViewModel.getDraftForLine(
+                                        filePath: filePath,
+                                        line: lineNumber ?? 0,
+                                        side: side
+                                    )
 
-                                if existingDraft != nil {
-                                    // Toggle expansion if draft exists
-                                    if expandedCommentLines.contains(identifier) {
-                                        expandedCommentLines.remove(identifier)
+                                    if existingDraft != nil {
+                                        if expandedCommentLines.contains(identifier) {
+                                            expandedCommentLines.remove(identifier)
+                                        } else {
+                                            expandedCommentLines.insert(identifier)
+                                        }
                                     } else {
+                                        _ = commentViewModel.addDraft(
+                                            filePath: filePath,
+                                            line: lineNumber ?? 0,
+                                            side: side
+                                        )
                                         expandedCommentLines.insert(identifier)
                                     }
-                                } else {
-                                    // Create new draft and expand
-                                    let newDraft = commentViewModel.addDraft(
+                                }
+                            },
+                            onAddComment: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    let existingDraft = commentViewModel.getDraftForLine(
                                         filePath: filePath,
                                         line: lineNumber ?? 0,
                                         side: side
                                     )
-                                    expandedCommentLines.insert(identifier)
-                                }
-                            }
-                        },
-                        onAddComment: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                let existingDraft = commentViewModel.getDraftForLine(
-                                    filePath: filePath,
-                                    line: lineNumber ?? 0,
-                                    side: side
-                                )
 
-                                if existingDraft == nil {
-                                    let newDraft = commentViewModel.addDraft(
-                                        filePath: filePath,
-                                        line: lineNumber ?? 0,
-                                        side: side
-                                    )
-                                    expandedCommentLines.insert(lineIdentifier(line))
+                                    if existingDraft == nil {
+                                        _ = commentViewModel.addDraft(
+                                            filePath: filePath,
+                                            line: lineNumber ?? 0,
+                                            side: side
+                                        )
+                                        expandedCommentLines.insert(lineIdentifier(line))
+                                    }
                                 }
-                            }
-                        }
-                    )
-
-                    if hasComments && expandedCommentLines.contains(lineIdentifier(line)) {
-                        Divider()
-                        InlineCommentView(
-                            comments: comments,
-                            draft: draft,
-                            onDraftBodyChange: { commentViewModel.updateDraft($0, body: $1) },
-                            onDeleteDraft: { commentViewModel.deleteDraft($0) },
-                            onSaveDraft: { _ in
-                                // Draft is already saved via onDraftBodyChange
-                                // This callback could be used to show success feedback
-                            },
-                            onEditComment: { _ in
-                                // TODO: Implement comment editing
-                            },
-                            onDeleteComment: { comment in
-                                Task {
-                                    try await GitHubService.shared.deleteReviewComment(
-                                        owner: pr.pr.repository.owner,
-                                        repo: pr.pr.repository.name,
-                                        commentId: comment.id
-                                    )
-                                    await commentViewModel.loadComments()
-                                }
-                            },
-                            onReply: { _, _ in
-                                // TODO: Implement comment replies
                             }
                         )
-                    }
+
+                        if hasComments && expandedCommentLines.contains(lineIdentifier(line)) {
+                            Divider()
+                            InlineCommentView(
+                                comments: comments,
+                                draft: draft,
+                                onDraftBodyChange: { commentViewModel.updateDraft($0, body: $1) },
+                                onDeleteDraft: { commentViewModel.deleteDraft($0) },
+                                onSaveDraft: { _ in
+                                    // Draft is already saved via onDraftBodyChange
+                                },
+                                onEditComment: { _ in
+                                    // TODO: Implement comment editing
+                                },
+                                onDeleteComment: { comment in
+                                    Task {
+                                        try await GitHubService.shared.deleteReviewComment(
+                                            owner: pr.pr.repository.owner,
+                                            repo: pr.pr.repository.name,
+                                            commentId: comment.id
+                                        )
+                                        await commentViewModel.loadComments()
+                                    }
+                                },
+                                onReply: { _, _ in
+                                    // TODO: Implement comment replies
+                                }
+                            )
+                        }
                     }
                 }
             }
-            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            // Ensure the content is at least as wide as the viewport so row backgrounds can fill to the right edge.
+            .frame(minWidth: viewportWidth, alignment: .leading)
+        }
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .preference(key: ViewportWidthPreferenceKey.self, value: geo.size.width)
+            }
+        )
+        .onPreferenceChange(ViewportWidthPreferenceKey.self) { newValue in
+            if abs(viewportWidth - newValue) > 0.5 {
+                viewportWidth = newValue
+            }
         }
         .frame(maxWidth: .infinity)
         .font(.system(size: fontSize, design: .monospaced))
@@ -890,10 +965,12 @@ struct DiffLineView: View {
                 Text(displayContent)
                     .font(.system(size: fontSize, design: .monospaced))
                     .foregroundColor(foregroundColor)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 2)
             .background(backgroundColor ?? Color.clear)
