@@ -37,9 +37,11 @@ struct DiffLine {
 @MainActor
 class PRDiffViewModel: ObservableObject {
     @Published var isLoading = false
+    @Published var isInitialLoad = true
     @Published var error: String?
     @Published var files: [ChangedFile] = []
     @Published var commentViewModel: ReviewCommentViewModel
+    @Published var parsedDiffLines: [String: [DiffLine]] = [:]
 
     private let pr: EnrichedPullRequest
 
@@ -53,28 +55,44 @@ class PRDiffViewModel: ObservableObject {
         commentViewModel = ReviewCommentViewModel(pr: pr, filePaths: filePaths)
     }
 
+    func getDiffLines(for file: ChangedFile) -> [DiffLine] {
+        if parsedDiffLines[file.path] == nil, let patch = file.patch {
+            // Cache parsed lines to avoid re-parsing on every render
+            parsedDiffLines[file.path] = parseDiffWithLineNumbers(patch, filePath: file.path)
+        }
+        return parsedDiffLines[file.path] ?? []
+    }
+
     func loadDiff() async {
         isLoading = true
         error = nil
+        parsedDiffLines.removeAll()
+
+        let startTime = Date()
 
         do {
             // Step 1: Fetch file metadata via GraphQL
+            let metadataStart = Date()
             let detail = try await GitHubService.shared.fetchPRDiff(
                 owner: pr.pr.repository.owner,
                 repo: pr.pr.repository.name,
                 number: pr.pr.number
             )
+            let metadataTime = Date().timeIntervalSince(metadataStart)
 
             var files = detail?.files?.nodes ?? []
 
             // Step 2: Fetch full diff via REST API
+            let diffStart = Date()
             let diffRaw = try await GitHubService.shared.fetchPRDiffRaw(
                 owner: pr.pr.repository.owner,
                 repo: pr.pr.repository.name,
                 number: pr.pr.number
             )
+            let diffTime = Date().timeIntervalSince(diffStart)
 
             // Step 3: Parse diff and associate with files
+            let parseStart = Date()
             let parsedPatches = parseUnifiedDiff(diffRaw)
 
             // Step 4: Match patches with files by path
@@ -83,21 +101,116 @@ class PRDiffViewModel: ObservableObject {
                     files[index].patch = patch
                 }
             }
+            let parseTime = Date().timeIntervalSince(parseStart)
 
             self.files = files
 
             // Step 5: Load comments
             updateCommentFilePaths()
             await commentViewModel.loadComments()
+
+            // Performance logging
+            let totalTime = Date().timeIntervalSince(startTime)
+            print("[PRMaster] Diff Load Performance: metadata=\(String(format: "%.2f", metadataTime))s, diff=\(String(format: "%.2f", diffTime))s, parse=\(String(format: "%.2f", parseTime))s, total=\(String(format: "%.2f", totalTime))s")
         } catch {
             self.error = error.localizedDescription
         }
 
         isLoading = false
+        isInitialLoad = false
+    }
+
+    func parseDiffWithLineNumbers(_ patch: String, filePath: String) -> [DiffLine] {
+        var lines: [DiffLine] = []
+        let patchLines = patch.components(separatedBy: "\n")
+
+        var oldLineNum: Int = 1
+        var newLineNum: Int = 1
+        var skipUntilNextHunk = false
+
+        for line in patchLines {
+            // Skip meta lines
+            if line.hasPrefix("diff --git") {
+                skipUntilNextHunk = true
+                continue
+            }
+            if line.hasPrefix("index ") {
+                continue
+            }
+            if line.hasPrefix("--- ") {
+                continue
+            }
+            if line.hasPrefix("+++ ") {
+                continue
+            }
+
+            // Parse hunk header to get line numbers
+            if line.hasPrefix("@@ ") {
+                skipUntilNextHunk = false
+
+                // Extract: @@ -oldStart,oldCount +newStart,newCount @@ optional_section
+                let range = line.dropFirst(3)
+                let components = range.components(separatedBy: " ")
+                var oldStart = oldLineNum
+                var newStart = newLineNum
+
+                for component in components {
+                    if component.hasPrefix("-") {
+                        // Format: -start,count
+                        let numStr = component.dropFirst().components(separatedBy: ",")
+                        if let start = Int(numStr[0]) {
+                            oldStart = start
+                        }
+                    } else if component.hasPrefix("+") {
+                        // Format: +start,count
+                        let numStr = component.dropFirst().components(separatedBy: ",")
+                        if let start = Int(numStr[0]) {
+                            newStart = start
+                        }
+                    } else if component.hasPrefix("@@") {
+                        break
+                    }
+                }
+
+                oldLineNum = oldStart
+                newLineNum = newStart
+
+                // Don't add hunk header to display
+                continue
+            }
+
+            // Skip everything until we hit first hunk
+            if skipUntilNextHunk {
+                continue
+            }
+
+            // Process diff lines and track line numbers
+            var oldNum: Int?
+            var newNum: Int?
+
+            if line.hasPrefix("-") {
+                oldNum = oldLineNum
+                oldLineNum += 1
+            } else if line.hasPrefix("+") {
+                newNum = newLineNum
+                newLineNum += 1
+            } else {
+                // Context line
+                oldNum = oldLineNum
+                newNum = newLineNum
+                oldLineNum += 1
+                newLineNum += 1
+            }
+
+            lines.append(DiffLine(content: line, oldLineNumber: oldNum, newLineNumber: newNum, filePath: filePath, commitId: nil))
+        }
+
+        return lines
     }
 
     private func parseUnifiedDiff(_ diff: String) -> [String: String] {
         var patches: [String: String] = [:]
+
         let sections = diff.components(separatedBy: "diff --git ")
 
         for section in sections {
@@ -160,12 +273,25 @@ struct PRDiffView: View {
         VStack(spacing: 0) {
             headerView
 
-            if viewModel.isLoading {
-                loadingView
-        } else if let error = viewModel.error {
-            errorView
-        } else if viewModel.files.isEmpty {
+            if viewModel.isInitialLoad && viewModel.isLoading {
+                skeletonDiffView
+            } else if let error = viewModel.error {
+                errorView
+            } else if viewModel.files.isEmpty {
                 emptyView
+            } else if viewModel.isLoading {
+                VStack {
+                    Spacer()
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 16, height: 16)
+                    Text("Loading details...")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding()
             } else {
                 diffFilesList
             }
@@ -272,6 +398,18 @@ struct PRDiffView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var skeletonDiffView: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(0..<5, id: \.self) { _ in
+                    SkeletonDiffFileRow()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private var errorView: some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -325,6 +463,7 @@ struct PRDiffView: View {
                         commitId: nil,
                         pr: pr,
                         fontSize: fontSize,
+                        diffViewModel: viewModel,
                         commentViewModel: viewModel.commentViewModel
                     )
                 }
@@ -342,6 +481,7 @@ struct FileDiffView: View {
     var commitId: String? = nil
     let pr: EnrichedPullRequest
     let fontSize: CGFloat
+    @ObservedObject var diffViewModel: PRDiffViewModel
     @ObservedObject var commentViewModel: ReviewCommentViewModel
 
     private var fileName: String {
@@ -403,13 +543,13 @@ struct FileDiffView: View {
                     lockFileWarning
                 } else if isBinaryFile {
                     binaryFileWarning
-                } else if let patch = file.patch {
+                } else if file.patch != nil {
                     InlineDiffView(
-                        patch: patch,
-                        filePath: file.path,
+                        file: file,
                         commitId: commitId,
                         pr: pr,
                         fontSize: fontSize,
+                        diffViewModel: diffViewModel,
                         commentViewModel: commentViewModel
                     )
                 }
@@ -490,109 +630,29 @@ struct FileDiffView: View {
 }
 
 struct InlineDiffView: View {
-    let patch: String
-    let filePath: String
+    let file: ChangedFile
     let commitId: String?
     let pr: EnrichedPullRequest
     let fontSize: CGFloat
+    @ObservedObject var diffViewModel: PRDiffViewModel
     @ObservedObject var commentViewModel: ReviewCommentViewModel
+
+    private var filePath: String {
+        file.path
+    }
+
+    private var patch: String? {
+        file.patch
+    }
     @State private var expandedCommentLines = Set<String>()
 
     private var diffLines: [DiffLine] {
-        parseDiffWithLineNumbers(patch)
+        diffViewModel.getDiffLines(for: file)
     }
 
     private func lineIdentifier(_ line: DiffLine) -> String {
         let side: CommentSide = line.type == .removed ? .left : .right
         return "\(line.filePath)-\(line.oldLineNumber ?? line.newLineNumber ?? 0)-\(side.rawValue)"
-    }
-
-    private func parseDiffWithLineNumbers(_ patch: String) -> [DiffLine] {
-        var lines: [DiffLine] = []
-        let patchLines = patch.components(separatedBy: "\n")
-
-        var oldLineNum: Int = 1
-        var newLineNum: Int = 1
-        var skipUntilNextHunk = false
-
-        for line in patchLines {
-            // Skip meta lines
-            if line.hasPrefix("diff --git") {
-                skipUntilNextHunk = true
-                continue
-            }
-            if line.hasPrefix("index ") {
-                continue
-            }
-            if line.hasPrefix("--- ") {
-                continue
-            }
-            if line.hasPrefix("+++ ") {
-                continue
-            }
-
-            // Parse hunk header to get line numbers
-            if line.hasPrefix("@@ ") {
-                skipUntilNextHunk = false
-
-                // Extract: @@ -oldStart,oldCount +newStart,newCount @@ optional_section
-                let range = line.dropFirst(3)
-                let components = range.components(separatedBy: " ")
-                var oldStart = oldLineNum
-                var newStart = newLineNum
-
-                for component in components {
-                    if component.hasPrefix("-") {
-                        // Format: -start,count
-                        let numStr = component.dropFirst().components(separatedBy: ",")
-                        if let start = Int(numStr[0]) {
-                            oldStart = start
-                        }
-                    } else if component.hasPrefix("+") {
-                        // Format: +start,count
-                        let numStr = component.dropFirst().components(separatedBy: ",")
-                        if let start = Int(numStr[0]) {
-                            newStart = start
-                        }
-                    } else if component.hasPrefix("@@") {
-                        break
-                    }
-                }
-
-                oldLineNum = oldStart
-                newLineNum = newStart
-
-                // Don't add hunk header to display
-                continue
-            }
-
-            // Skip everything until we hit the first hunk
-            if skipUntilNextHunk {
-                continue
-            }
-
-            // Process diff lines and track line numbers
-            var oldNum: Int?
-            var newNum: Int?
-
-            if line.hasPrefix("-") {
-                oldNum = oldLineNum
-                oldLineNum += 1
-            } else if line.hasPrefix("+") {
-                newNum = newLineNum
-                newLineNum += 1
-            } else {
-                // Context line
-                oldNum = oldLineNum
-                newNum = newLineNum
-                oldLineNum += 1
-                newLineNum += 1
-            }
-
-            lines.append(DiffLine(content: line, oldLineNumber: oldNum, newLineNumber: newNum, filePath: filePath, commitId: commitId))
-        }
-
-        return lines
     }
 
     var body: some View {
@@ -824,5 +884,56 @@ struct DiffLineView: View {
             .background(backgroundColor ?? Color.clear)
         }
         .frame(height: line.type == .context ? fontSize + 8 : nil)
+    }
+}
+
+struct SkeletonDiffFileRow: View {
+    @State private var isAnimating = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
+                Circle()
+                    .fill(Color.gray.opacity(0.2))
+                    .frame(width: 8, height: 8)
+                    .padding(.top, 5)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    // File name placeholder
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(width: .random(in: 150...250), height: 13)
+
+                    // Directory placeholder
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.gray.opacity(0.15))
+                        .frame(width: 80, height: 11)
+                }
+
+                Spacer()
+
+                // Stats placeholder
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.gray.opacity(0.15))
+                        .frame(width: 30, height: 11)
+
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.gray.opacity(0.15))
+                        .frame(width: 30, height: 11)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .opacity(isAnimating ? 0.6 : 1.0)
+        .animation(
+            Animation.easeInOut(duration: 0.8)
+                .repeatForever(autoreverses: true),
+            value: isAnimating
+        )
+        .onAppear {
+            isAnimating = true
+        }
     }
 }
