@@ -77,6 +77,12 @@ actor GitHubService {
         )
         callLogs.append(log)
 
+        // Debug logging for slow API calls (> 1 second)
+        if duration > 1.0 {
+            let status = success ? "✓" : "✗"
+            print("[PRMaster] [SLOW API] \(status) \(String(format: "%.2fs", duration)) - \(command)")
+        }
+
         // Keep only last N entries
         while callLogs.count > maxLogEntries {
             callLogs.removeFirst()
@@ -247,7 +253,7 @@ actor GitHubService {
               headRefName
               baseRefName
               reviewDecision
-              reviews(first: 50) {
+              reviews(first: 10) {
                 nodes {
                   author { login }
                   state
@@ -273,7 +279,7 @@ actor GitHubService {
                   commit {
                     statusCheckRollup {
                       state
-                      contexts(first: 50) {
+                      contexts(first: 10) {
                         nodes {
                           ... on CheckRun {
                             name
@@ -292,7 +298,7 @@ actor GitHubService {
                   }
                 }
               }
-              files(first: 100) {
+              files(first: 50) {
                 nodes {
                   path
                 }

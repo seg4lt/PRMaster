@@ -457,8 +457,8 @@ struct APIStatsView: View {
             await refreshStats()
         }
         .onAppear {
-            // Auto-refresh every 2 seconds to catch new API calls
-            refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+            // Auto-refresh every 5 seconds to catch new API calls
+            refreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
                 Task { @MainActor in
                     await refreshStats()
                 }
