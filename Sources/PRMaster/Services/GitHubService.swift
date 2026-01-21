@@ -31,9 +31,11 @@ actor GitHubService {
         guard let data = UserDefaults.standard.data(forKey: "repositoryLocalPaths"),
               let paths = try? JSONDecoder().decode([RepositoryLocalPath].self, from: data),
               let repoPath = paths.first(where: { $0.id == repoKey })?.localPath else {
+            print("[GitHubService] No local path configured for \(repoKey)")
             return nil
         }
 
+        print("[GitHubService] Found local path for \(repoKey): \(repoPath)")
         return URL(fileURLWithPath: repoPath)
     }
 
@@ -580,6 +582,13 @@ actor GitHubService {
 
         let workingDir = getLocalPathForRepo(owner: owner, repo: repo)
 
+        if let dir = workingDir {
+            print("[GitHubService] ✓ Running 'gh pr diff \(number)' from: \(dir.path)")
+        } else {
+            print("[GitHubService] ⚠️  No local path configured for \(owner)/\(repo), running from: /tmp")
+            print("[GitHubService] ⚠️  This may cause 'not a git repository' errors!")
+        }
+
         do {
             // Use gh pr diff command from local directory if configured
             let diff = try await shell.executeGH([
@@ -588,6 +597,7 @@ actor GitHubService {
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
             return filterDiff(diff)
         } catch {
+            print("[GitHubService] ❌ Error executing 'gh pr diff \(number)': \(error.localizedDescription)")
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
             throw error
         }
@@ -604,6 +614,13 @@ actor GitHubService {
 
         let workingDir = getLocalPathForRepo(owner: owner, repo: repoName)
 
+        if let dir = workingDir {
+            print("[GitHubService] ✓ Running 'gh diff \(sha.prefix(7))' from: \(dir.path)")
+        } else {
+            print("[GitHubService] ⚠️  No local path configured for \(repo), running from: /tmp")
+            print("[GitHubService] ⚠️  This may cause 'not a git repository' errors!")
+        }
+
         do {
             // Use gh diff command from local directory if configured
             let diff = try await shell.executeGH([
@@ -612,6 +629,7 @@ actor GitHubService {
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
             return filterDiff(diff)
         } catch {
+            print("[GitHubService] ❌ Error executing 'gh diff \(sha.prefix(7))': \(error.localizedDescription)")
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
             throw error
         }
