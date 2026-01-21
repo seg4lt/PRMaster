@@ -28,14 +28,29 @@ actor GitHubService {
     private func getLocalPathForRepo(owner: String, repo: String) -> URL? {
         let repoKey = "\(owner)/\(repo)"
 
-        guard let data = UserDefaults.standard.data(forKey: "repositoryLocalPaths"),
-              let paths = try? JSONDecoder().decode([RepositoryLocalPath].self, from: data),
-              let repoPath = paths.first(where: { $0.id == repoKey })?.localPath else {
-            print("[GitHubService] No local path configured for \(repoKey)")
+        print("[GitHubService] 🔍 Looking up local path for repo: \(repoKey)")
+
+        guard let data = UserDefaults.standard.data(forKey: "repositoryLocalPaths") else {
+            print("[GitHubService] ❌ No data found in UserDefaults for key 'repositoryLocalPaths'")
             return nil
         }
 
-        print("[GitHubService] Found local path for \(repoKey): \(repoPath)")
+        guard let paths = try? JSONDecoder().decode([RepositoryLocalPath].self, from: data) else {
+            print("[GitHubService] ❌ Failed to decode repositoryLocalPaths from UserDefaults")
+            return nil
+        }
+
+        print("[GitHubService] 📋 All configured repository paths:")
+        for path in paths {
+            print("    - \(path.id): \(path.localPath)")
+        }
+
+        guard let repoPath = paths.first(where: { $0.id == repoKey })?.localPath else {
+            print("[GitHubService] ❌ No match found for '\(repoKey)' in configured paths")
+            return nil
+        }
+
+        print("[GitHubService] ✅ Found local path for \(repoKey): \(repoPath)")
         return URL(fileURLWithPath: repoPath)
     }
 

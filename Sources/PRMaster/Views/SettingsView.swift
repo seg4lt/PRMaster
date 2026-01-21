@@ -23,7 +23,12 @@ struct SettingsView: View {
     }
 
     private var repoLocalPaths: [RepositoryLocalPath] {
-        (try? JSONDecoder().decode([RepositoryLocalPath].self, from: Data(repositoryLocalPathsJSON.utf8))) ?? []
+        let paths = (try? JSONDecoder().decode([RepositoryLocalPath].self, from: Data(repositoryLocalPathsJSON.utf8))) ?? []
+        print("[Settings] Loading \(paths.count) repository paths from UserDefaults:")
+        for path in paths {
+            print("    - \(path.id): \(path.localPath)")
+        }
+        return paths
     }
 
     private func saveBadgeConfigs(_ configs: [BadgeSourceConfig]) {
@@ -34,9 +39,17 @@ struct SettingsView: View {
     }
 
     private func saveRepoPaths(_ paths: [RepositoryLocalPath]) {
+        print("[Settings] Saving \(paths.count) repository paths to UserDefaults")
+        for path in paths {
+            print("    - \(path.id): \(path.localPath)")
+        }
+
         if let data = try? JSONEncoder().encode(paths),
            let json = String(data: data, encoding: .utf8) {
             repositoryLocalPathsJSON = json
+            print("[Settings] ✅ Saved successfully, JSON length: \(json.count)")
+        } else {
+            print("[Settings] ❌ Failed to encode repository paths")
         }
     }
 
