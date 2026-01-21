@@ -74,8 +74,10 @@ actor ShellExecutor {
         // Wait for process with timeout
         let startTime = Date()
         while process.isRunning {
-            if Date().timeIntervalSince(startTime) > timeout {
+            let elapsed = Date().timeIntervalSince(startTime)
+            if elapsed > timeout {
                 process.terminate()
+                print("[ShellExecutor] ❌ Command timed out after \(elapsed)s")
                 throw ShellError.timeout(timeout)
             }
             try await Task.sleep(nanoseconds: 100_000_000) // 0.1 second
@@ -83,8 +85,13 @@ actor ShellExecutor {
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
+        let elapsedTime = Date().timeIntervalSince(startTime)
+
+        print("[ShellExecutor] ✓ Process completed in \(String(format: "%.2f", elapsedTime))s with exit code \(process.terminationStatus)")
+        print("[ShellExecutor] Output size: \(output.count) bytes")
 
         if process.terminationStatus != 0 {
+            print("[ShellExecutor] ❌ Command failed with output: \(output)")
             throw ShellError.commandFailed(output, process.terminationStatus)
         }
 

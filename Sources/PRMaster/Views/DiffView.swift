@@ -96,6 +96,7 @@ class PRDiffViewModel: ObservableObject {
             )
             let diffTime = Date().timeIntervalSince(diffStart)
             print("[PRMaster] ✓ Diff fetched in \(String(format: "%.2f", diffTime))s (\(diffRaw.count) bytes)")
+            print("[PRMaster] First 200 chars of diff: \(String(diffRaw.prefix(200)))")
 
             // Step 3: Parse diff and associate with files
             print("[PRMaster] Step 3: Parsing diff...")
