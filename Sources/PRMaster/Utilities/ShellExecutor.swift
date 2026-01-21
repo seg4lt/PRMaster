@@ -22,8 +22,8 @@ actor ShellExecutor {
 
     private init() {}
 
-    func execute(_ command: String, arguments: [String] = [], timeout: TimeInterval = 30, workingDirectory: URL? = nil) async throws -> String {
-        print("[ShellExecutor] Executing: \(command) \(arguments.joined(separator: " ")) in \(workingDirectory?.path ?? "temp") with timeout: \(timeout)s")
+    func execute(_ command: String, arguments: [String] = [], timeout: TimeInterval = 30, workingDirectory: URL? = nil, disablePager: Bool = false) async throws -> String {
+        print("[ShellExecutor] Executing: \(command) \(arguments.joined(separator: " ")) in \(workingDirectory?.path ?? "temp") with timeout: \(timeout)s, disablePager=\(disablePager)")
 
         let process = Process()
         let pipe = Pipe()
@@ -40,10 +40,13 @@ actor ShellExecutor {
         var env = ProcessInfo.processInfo.environment
         let home = env["HOME"] ?? NSHomeDirectory()
 
-        // Disable pager for git/gh commands to prevent hanging
-        env["GIT_PAGER"] = "cat"
-        env["PAGER"] = "cat"
-        env["LESS"] = "-FRX"
+        // Disable pager for git/gh commands to prevent hanging (when requested)
+        if disablePager {
+            env["GIT_PAGER"] = "cat"
+            env["GH_PAGER"] = "cat"
+            env["PAGER"] = "cat"
+            env["LESS"] = "-FRX"
+        }
 
         let additionalPaths = [
             "/opt/homebrew/bin",
@@ -88,7 +91,7 @@ actor ShellExecutor {
         return output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func executeGH(_ arguments: [String], timeout: TimeInterval = 60, workingDirectory: URL? = nil) async throws -> String {
-        try await execute("gh", arguments: arguments, timeout: timeout, workingDirectory: workingDirectory)
+    func executeGH(_ arguments: [String], timeout: TimeInterval = 60, workingDirectory: URL? = nil, disablePager: Bool = false) async throws -> String {
+        try await execute("gh", arguments: arguments, timeout: timeout, workingDirectory: workingDirectory, disablePager: disablePager)
     }
 }

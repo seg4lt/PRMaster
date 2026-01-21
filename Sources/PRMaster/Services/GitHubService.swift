@@ -610,8 +610,8 @@ actor GitHubService {
         do {
             // Use gh pr diff command from local directory if configured
             let diff = try await shell.executeGH([
-                "pr", "diff", "--no-pager", "\(number)"
-            ], timeout: 120, workingDirectory: workingDir)
+                "pr", "diff", "\(number)"
+            ], timeout: 120, workingDirectory: workingDir, disablePager: true)
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
             return filterDiff(diff)
         } catch {
@@ -642,8 +642,8 @@ actor GitHubService {
         do {
             // Use gh diff command from local directory if configured
             let diff = try await shell.executeGH([
-                "diff", "--no-pager", "\(sha.prefix(7))"
-            ], timeout: 60, workingDirectory: workingDir)
+                "diff", "\(sha.prefix(7))"
+            ], timeout: 60, workingDirectory: workingDir, disablePager: true)
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
             return filterDiff(diff)
         } catch {
