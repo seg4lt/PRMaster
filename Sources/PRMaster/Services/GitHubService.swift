@@ -37,20 +37,24 @@ actor GitHubService {
             return nil
         }
 
-        let context = ModelContext(container)
-        let descriptor = FetchDescriptor<RepositoryLocalPath>()
-        guard let repoPaths = try? context.fetch(descriptor) else {
-            print("[GitHubService] ❌ Failed to fetch repository paths")
+        do {
+            let context = ModelContext(container)
+            let descriptor = FetchDescriptor<RepositoryLocalPath>()
+            let repoPaths = try context.fetch(descriptor)
+
+            print("[GitHubService] Available paths: \(repoPaths.map { "\($0.id) -> \($0.localPath)" }.joined(separator: ", "))")
+
+            guard let foundPath = repoPaths.first(where: { $0.id == repoKey })?.localPath else {
+                print("[GitHubService] ❌ No match found for '\(repoKey)' in cached paths")
+                return nil
+            }
+
+            print("[GitHubService] ✅ Found local path for \(repoKey): \(foundPath)")
+            return URL(fileURLWithPath: foundPath)
+        } catch {
+            print("[GitHubService] ❌ Failed to fetch repository paths: \(error.localizedDescription)")
             return nil
         }
-
-        guard let foundPath = repoPaths.first(where: { $0.id == repoKey })?.localPath else {
-            print("[GitHubService] ❌ No match found for '\(repoKey)' in cached paths")
-            return nil
-        }
-
-        print("[GitHubService] ✅ Found local path for \(repoKey): \(foundPath)")
-        return URL(fileURLWithPath: foundPath)
     }
 
     private func withRetry<T>(
