@@ -64,6 +64,7 @@ class PRDiffViewModel: ObservableObject {
     }
 
     func loadDiff() async {
+        print("[PRMaster] Starting diff load for PR \(pr.pr.repository.nameWithOwner)#\(pr.pr.number)")
         isLoading = true
         error = nil
         parsedDiffLines.removeAll()
@@ -72,6 +73,7 @@ class PRDiffViewModel: ObservableObject {
 
         do {
             // Step 1: Fetch file metadata via GraphQL
+            print("[PRMaster] Step 1: Fetching file metadata...")
             let metadataStart = Date()
             let detail = try await GitHubService.shared.fetchPRDiff(
                 owner: pr.pr.repository.owner,
@@ -79,10 +81,13 @@ class PRDiffViewModel: ObservableObject {
                 number: pr.pr.number
             )
             let metadataTime = Date().timeIntervalSince(metadataStart)
+            print("[PRMaster] ✓ Metadata fetched in \(String(format: "%.2f", metadataTime))s")
 
             var files = detail?.files?.nodes ?? []
+            print("[PRMaster] Found \(files.count) files")
 
             // Step 2: Fetch full diff via REST API
+            print("[PRMaster] Step 2: Fetching diff content...")
             let diffStart = Date()
             let diffRaw = try await GitHubService.shared.fetchPRDiffRaw(
                 owner: pr.pr.repository.owner,
@@ -90,8 +95,10 @@ class PRDiffViewModel: ObservableObject {
                 number: pr.pr.number
             )
             let diffTime = Date().timeIntervalSince(diffStart)
+            print("[PRMaster] ✓ Diff fetched in \(String(format: "%.2f", diffTime))s (\(diffRaw.count) bytes)")
 
             // Step 3: Parse diff and associate with files
+            print("[PRMaster] Step 3: Parsing diff...")
             let parseStart = Date()
             let parsedPatches = parseUnifiedDiff(diffRaw)
 
@@ -102,22 +109,28 @@ class PRDiffViewModel: ObservableObject {
                 }
             }
             let parseTime = Date().timeIntervalSince(parseStart)
+            print("[PRMaster] ✓ Diff parsed in \(String(format: "%.2f", parseTime))s")
 
             self.files = files
+            print("[PRMaster] ✓ Updated files array with \(files.count) files")
 
             // Step 5: Load comments
+            print("[PRMaster] Step 4: Loading comments...")
             updateCommentFilePaths()
             await commentViewModel.loadComments()
+            print("[PRMaster] ✓ Comments loaded")
 
             // Performance logging
             let totalTime = Date().timeIntervalSince(startTime)
-            print("[PRMaster] Diff Load Performance: metadata=\(String(format: "%.2f", metadataTime))s, diff=\(String(format: "%.2f", diffTime))s, parse=\(String(format: "%.2f", parseTime))s, total=\(String(format: "%.2f", totalTime))s")
+            print("[PRMaster] ✅ Diff Load Complete: metadata=\(String(format: "%.2f", metadataTime))s, diff=\(String(format: "%.2f", diffTime))s, parse=\(String(format: "%.2f", parseTime))s, total=\(String(format: "%.2f", totalTime))s")
         } catch {
+            print("[PRMaster] ❌ Error loading diff: \(error)")
             self.error = error.localizedDescription
         }
 
         isLoading = false
         isInitialLoad = false
+        print("[PRMaster] Loading state: isLoading=\(isLoading), isInitialLoad=\(isInitialLoad), files.count=\(files.count), error=\(error?.description ?? "none")")
     }
 
     func parseDiffWithLineNumbers(_ patch: String, filePath: String) -> [DiffLine] {
@@ -298,6 +311,7 @@ struct PRDiffView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
+            print("[PRMaster] View task triggered - isInitialLoad=\(viewModel.isInitialLoad), isLoading=\(viewModel.isLoading), files.count=\(viewModel.files.count)")
             if viewModel.files.isEmpty && !viewModel.isLoading {
                 await viewModel.loadDiff()
             }
