@@ -51,10 +51,24 @@ class AISummaryViewModel: ObservableObject {
             onStatusUpdate: { [weak self] message in
                 self?.statusMessage = message
             },
-            onSummaryUpdate: { [weak self] id, status in
+            onSummaryUpdate: { [weak self] id, status, commits in
                 guard let self = self,
                       let index = self.summaries.firstIndex(where: { $0.id == id }) else { return }
+
+                // Update the status
                 self.summaries[index].status = status
+
+                // Update the commits array if provided
+                if let commits = commits {
+                    let existingDateRange = self.summaries[index].dateRange
+                    self.summaries[index].dateRange = DateRangeCommits(
+                        id: existingDateRange.id,
+                        startDate: existingDateRange.startDate,
+                        endDate: existingDateRange.endDate,
+                        commits: commits
+                    )
+                }
+
                 self.saveCachedSummaries()
             },
             onComplete: { [weak self] in

@@ -96,6 +96,10 @@ struct SettingsView: View {
 
                 Divider()
 
+                LocalRepoMappingSection(repoManager: viewModel.repoManager)
+
+                Divider()
+
                 DataSection(viewModel: viewModel)
 
                 Divider()
@@ -111,6 +115,7 @@ struct SettingsView: View {
             await viewModel.checkGHStatus()
             await viewModel.checkAIProviderStatus(for: selectedProvider)
             await viewModel.loadModelsIfNeeded(for: selectedProvider)
+            await viewModel.repoManager.loadReposIfNeeded()
         }
         .onChange(of: selectedProvider) { _, newValue in
             Task {

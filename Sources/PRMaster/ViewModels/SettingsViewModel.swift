@@ -21,8 +21,8 @@ class SettingsViewModel: ObservableObject {
     @Published var isLoadingModels = false
     @Published var isRefreshingRepoCache = false
     @Published var repoCacheError: String?
-    
-    private let repoManager = RepoManager()
+
+    let repoManager = RepoManager()
 
     // MARK: - GitHub Status
 

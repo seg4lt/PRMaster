@@ -610,6 +610,126 @@ actor GitHubService {
 
         return allDiffs
     }
+
+    // MARK: - Local Git Fallback Methods
+
+    func fetchUserCommitsWithLocalFallback(
+        author: String,
+        startDate: Date,
+        endDate: Date,
+        repos: [String]
+    ) async throws -> [Commit] {
+        guard !repos.isEmpty else { return [] }
+
+        let mappingService = await LocalRepoMappingService.shared
+        let mappings = await mappingService.mappings
+
+        var localRepos: [(String, String)] = []
+        var remoteRepos: [String] = []
+
+        for repo in repos {
+            if let mapping = mappings.first(where: { $0.repositoryName == repo }) {
+                localRepos.append((repo, mapping.localPath))
+            } else {
+                remoteRepos.append(repo)
+            }
+        }
+
+        var allCommits: [Commit] = []
+
+        for (repoName, localPath) in localRepos {
+            do {
+                let commits = try await LocalGitService.shared.fetchCommits(
+                    localPath: localPath,
+                    author: author,
+                    startDate: startDate,
+                    endDate: endDate,
+                    repositoryName: repoName
+                )
+                allCommits.append(contentsOf: commits)
+            } catch {
+                // Silently fall back to API if local fetch fails
+                print("Local git fetch failed for \(repoName), falling back to API: \(error)")
+                remoteRepos.append(repoName)
+            }
+        }
+
+        if !remoteRepos.isEmpty {
+            let remoteCommits = try await fetchCommitsFromRepos(
+                author: author,
+                startDate: startDate,
+                endDate: endDate,
+                repos: remoteRepos
+            )
+            allCommits.append(contentsOf: remoteCommits)
+        }
+
+        // Sort by date (newest first)
+        return allCommits.sorted { $0.authorDate > $1.authorDate }
+    }
+
+    func fetchCommitDiffsWithLocalFallback(
+        commits: [Commit],
+        concurrencyLimit: Int = 5
+    ) async -> [String: String] {
+        var commitsByRepo: [String: [Commit]] = [:]
+        for commit in commits {
+            commitsByRepo[commit.repository, default: []].append(commit)
+        }
+
+        let mappingService = await LocalRepoMappingService.shared
+        let mappings = await mappingService.mappings
+
+        var allDiffs: [String: String] = [:]
+
+        for (repo, repoCommits) in commitsByRepo {
+            if let mapping = mappings.first(where: { $0.repositoryName == repo }) {
+                let diffs = await LocalGitService.shared.fetchCommitDiffs(
+                    commits: repoCommits,
+                    localPath: mapping.localPath,
+                    concurrencyLimit: concurrencyLimit
+                )
+                allDiffs.merge(diffs) { _, new in new }
+            } else {
+                let diffs = await fetchCommitDiffsForRepo(repo: repo, commits: repoCommits, concurrencyLimit: concurrencyLimit)
+                allDiffs.merge(diffs) { _, new in new }
+            }
+        }
+
+        return allDiffs
+    }
+
+    private func fetchCommitDiffsForRepo(
+        repo: String,
+        commits: [Commit],
+        concurrencyLimit: Int
+    ) async -> [String: String] {
+        var repoDiffs: [String: String] = [:]
+
+        for chunk in commits.chunked(into: concurrencyLimit) {
+            await withTaskGroup(of: (String, String?).self) { group in
+                for commit in chunk {
+                    group.addTask {
+                        do {
+                            let diff = try await self.fetchCommitDiff(repo: repo, sha: commit.sha)
+                            return (commit.sha, diff)
+                        } catch {
+                            // Return nil on failure - we'll proceed without the diff
+                            return (commit.sha, nil)
+                        }
+                    }
+                }
+
+                for await (sha, diff) in group {
+                    if let diff = diff {
+                        repoDiffs[sha] = diff
+                    }
+                }
+            }
+        }
+
+        return repoDiffs
+    }
 }
 
 // MARK: - Array Extension for Chunking
