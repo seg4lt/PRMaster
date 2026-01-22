@@ -37,13 +37,20 @@ struct AISummaryView: View {
 
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "sparkles")
-                    .foregroundColor(.purple)
-                Text("AI Summary")
-                    .font(.headline)
-                Spacer()
-                providerStatusBadge
+            VStack {
+                HStack {
+                    Image(systemName: "sparkles")
+                        .foregroundColor(.purple)
+                    Text("AI Summary")
+                        .font(.headline)
+                    Spacer()
+                    providerStatusBadge
+                }
+                HStack {
+                    Text("For faster performance, map repositories to local git in Settings")
+                    .font(.subheadline)
+                    Spacer()
+                }
             }
 
             HStack(spacing: 16) {

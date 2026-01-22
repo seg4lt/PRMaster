@@ -1,9 +1,15 @@
 import Foundation
 
+/// Result of summary generation containing both the text and commits
+struct SummaryResult {
+    let summaryText: String
+    let commits: [Commit]
+}
+
 /// Callbacks for summary generation progress updates
 struct SummaryGeneratorCallbacks {
     let onStatusUpdate: @MainActor (String?) -> Void
-    let onSummaryUpdate: @MainActor (UUID, SummaryStatus) -> Void
+    let onSummaryUpdate: @MainActor (UUID, SummaryStatus, [Commit]?) -> Void
     let onComplete: @MainActor () -> Void
     let onFail: @MainActor (String) -> Void
     let getSummary: @MainActor (UUID) -> DateRangeSummary?
@@ -59,7 +65,7 @@ actor SummaryGenerator {
 
                 // Mark as loading
                 await MainActor.run {
-                    callbacks.onSummaryUpdate(summaryId, .loading)
+                    callbacks.onSummaryUpdate(summaryId, .loading, nil)
                     callbacks.onStatusUpdate("Fetching commits for \(dateLabel)...")
                 }
 
@@ -77,13 +83,13 @@ actor SummaryGenerator {
 
                     if !Task.isCancelled {
                         await MainActor.run {
-                            callbacks.onSummaryUpdate(summaryId, .completed(result))
+                            callbacks.onSummaryUpdate(summaryId, .completed(result.summaryText), result.commits)
                         }
                     }
                 } catch {
                     if !Task.isCancelled {
                         await MainActor.run {
-                            callbacks.onSummaryUpdate(summaryId, .error(error.localizedDescription))
+                            callbacks.onSummaryUpdate(summaryId, .error(error.localizedDescription), nil)
                         }
                     }
                 }
@@ -106,9 +112,9 @@ actor SummaryGenerator {
         provider: any AIProvider,
         model: String?,
         onStatusUpdate: @escaping @MainActor (String?) -> Void
-    ) async throws -> String {
+    ) async throws -> SummaryResult {
         // Fetch commits
-        let commits = try await GitHubService.shared.fetchUserCommits(
+        let commits = try await GitHubService.shared.fetchUserCommitsWithLocalFallback(
             author: currentUser,
             startDate: weekStart,
             endDate: weekEnd,
@@ -120,7 +126,7 @@ actor SummaryGenerator {
         }
 
         if commits.isEmpty {
-            return "No commits in this date range."
+            return SummaryResult(summaryText: "No commits in this date range.", commits: [])
         }
 
         // Fetch diffs
@@ -128,7 +134,7 @@ actor SummaryGenerator {
             onStatusUpdate("Fetching diffs for \(dateLabel) (\(commits.count) commits)...")
         }
 
-        let diffs = await GitHubService.shared.fetchCommitDiffs(commits: commits)
+        let diffs = await GitHubService.shared.fetchCommitDiffsWithLocalFallback(commits: commits)
 
         if Task.isCancelled {
             throw CancellationError()
@@ -164,7 +170,8 @@ actor SummaryGenerator {
             }
         }
 
-        return try await provider.summarizeDateRange(commits: enrichedCommits, dateLabel: dateLabel, model: model)
+        let summaryText = try await provider.summarizeDateRange(commits: enrichedCommits, dateLabel: dateLabel, model: model)
+        return SummaryResult(summaryText: summaryText, commits: commits)
     }
 
     /// Retry a failed summary
@@ -190,7 +197,7 @@ actor SummaryGenerator {
                     callbacks.onStatusUpdate("Fetching diffs for \(dateLabel)...")
                 }
 
-                let diffs = await GitHubService.shared.fetchCommitDiffs(commits: commits)
+                let diffs = await GitHubService.shared.fetchCommitDiffsWithLocalFallback(commits: commits)
 
                 let enrichedCommits = commits.map { commit in
                     EnrichedCommit(commit: commit, diff: diffs[commit.sha])
@@ -208,12 +215,12 @@ actor SummaryGenerator {
                 )
 
                 await MainActor.run {
-                    callbacks.onSummaryUpdate(summaryId, .completed(result))
+                    callbacks.onSummaryUpdate(summaryId, .completed(result), commits)
                     callbacks.onStatusUpdate(nil)
                 }
             } catch {
                 await MainActor.run {
-                    callbacks.onSummaryUpdate(summaryId, .error(error.localizedDescription))
+                    callbacks.onSummaryUpdate(summaryId, .error(error.localizedDescription), nil)
                     callbacks.onStatusUpdate(nil)
                 }
             }

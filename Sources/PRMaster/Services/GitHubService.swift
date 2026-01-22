@@ -464,23 +464,52 @@ actor GitHubService {
 
     // MARK: - Repository Listing
 
+    /// Fetch list of organizations user belongs to
+    func fetchUserOrganizations() async throws -> [String] {
+        let output = try await shell.executeGH([
+            "org", "list"
+        ])
+        return output.components(separatedBy: "\n").filter { !$0.isEmpty }
+    }
+
     /// Fetch all repos the user has access to (personal + org)
     func fetchAccessibleRepos() async throws -> [String] {
         let start = Date()
         let command = "list repos"
 
         do {
-            // Use gh repo list which shows all accessible repos
-            let output = try await shell.executeGH([
+            var allRepos: [String] = []
+
+            // Fetch personal repos
+            let personalOutput = try await shell.executeGH([
                 "repo", "list",
-                "--limit", "200",
+                "--limit", "1000",
                 "--json", "nameWithOwner",
                 "--jq", ".[].nameWithOwner"
             ])
+            allRepos.append(contentsOf: personalOutput.components(separatedBy: "\n").filter { !$0.isEmpty })
+
+            // Fetch org repos
+            let orgs = try await fetchUserOrganizations()
+            for org in orgs {
+                do {
+                    let orgOutput = try await shell.executeGH([
+                        "repo", "list", org,
+                        "--limit", "1000",
+                        "--json", "nameWithOwner",
+                        "--jq", ".[].nameWithOwner"
+                    ])
+                    allRepos.append(contentsOf: orgOutput.components(separatedBy: "\n").filter { !$0.isEmpty })
+                } catch {
+                    // Log warning but continue with other orgs (e.g., IP allow list restrictions)
+                    print("Warning: Could not fetch repos for org '\(org)': \(error.localizedDescription)")
+                }
+            }
+
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
 
-            guard !output.isEmpty else { return [] }
-            return output.components(separatedBy: "\n").filter { !$0.isEmpty }
+            // Remove duplicates and sort
+            return Array(Set(allRepos)).sorted()
         } catch {
             trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
             throw error
@@ -706,161 +735,124 @@ actor GitHubService {
         return allDiffs
     }
 
-    // MARK: - Review Comments
+    // MARK: - Local Git Fallback Methods
 
-    func fetchReviewComments(owner: String, repo: String, number: Int) async throws -> [PullRequestReviewComment] {
-        let start = Date()
-        let command = "api pull request comments"
+    func fetchUserCommitsWithLocalFallback(
+        author: String,
+        startDate: Date,
+        endDate: Date,
+        repos: [String]
+    ) async throws -> [Commit] {
+        guard !repos.isEmpty else { return [] }
 
-        do {
-            let output = try await shell.executeGH([
-                "api",
-                "repos/\(owner)/\(repo)/pulls/\(number)/comments",
-                "--paginate"
-            ])
-            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+        let mappingService = await LocalRepoMappingService.shared
+        let mappings = await mappingService.mappings
 
-            let data = Data(output.utf8)
-            return try decoder.decode([PullRequestReviewComment].self, from: data)
-        } catch {
-            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
-            throw error
-        }
-    }
+        var localRepos: [(String, String)] = []
+        var remoteRepos: [String] = []
 
-    func createReviewComment(
-        owner: String,
-        repo: String,
-        number: Int,
-        path: String,
-        line: Int,
-        side: String,
-        commitId: String,
-        body: String
-    ) async throws -> PullRequestReviewComment {
-        let start = Date()
-        let command = "api create review comment"
-
-        do {
-            let requestBody: [String: Any] = [
-                "body": body,
-                "commit_id": commitId,
-                "path": path,
-                "line": line,
-                "side": side
-            ]
-
-            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
-            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
-
-            let output = try await shell.executeGH([
-                "api",
-                "-X", "POST",
-                "repos/\(owner)/\(repo)/pulls/\(number)/comments",
-                "-f", jsonString
-            ])
-            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
-
-            let data = Data(output.utf8)
-            return try decoder.decode(PullRequestReviewComment.self, from: data)
-        } catch {
-            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
-            throw error
-        }
-    }
-
-    func updateReviewComment(
-        owner: String,
-        repo: String,
-        commentId: Int,
-        body: String
-    ) async throws -> PullRequestReviewComment {
-        let start = Date()
-        let command = "api update review comment"
-
-        do {
-            let requestBody: [String: Any] = [
-                "body": body
-            ]
-
-            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
-            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
-
-            let output = try await shell.executeGH([
-                "api",
-                "-X", "PATCH",
-                "repos/\(owner)/\(repo)/pulls/comments/\(commentId)",
-                "-f", jsonString
-            ])
-            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
-
-            let data = Data(output.utf8)
-            return try decoder.decode(PullRequestReviewComment.self, from: data)
-        } catch {
-            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
-            throw error
-        }
-    }
-
-    func deleteReviewComment(owner: String, repo: String, commentId: Int) async throws {
-        let start = Date()
-        let command = "api delete review comment"
-
-        do {
-            _ = try await shell.executeGH([
-                "api",
-                "-X", "DELETE",
-                "repos/\(owner)/\(repo)/pulls/comments/\(commentId)"
-            ])
-            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
-        } catch {
-            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
-            throw error
-        }
-    }
-
-    func createPullRequestReview(
-        owner: String,
-        repo: String,
-        number: Int,
-        commitId: String,
-        event: String,
-        body: String = "",
-        comments: [[String: Any]] = []
-    ) async throws -> String {
-        let start = Date()
-        let command = "api create pull request review"
-
-        do {
-            var requestBody: [String: Any] = [
-                "commit_id": commitId,
-                "event": event
-            ]
-
-            if !body.isEmpty {
-                requestBody["body"] = body
+        for repo in repos {
+            if let mapping = mappings.first(where: { $0.repositoryName == repo }) {
+                localRepos.append((repo, mapping.localPath))
+            } else {
+                remoteRepos.append(repo)
             }
-
-            if !comments.isEmpty {
-                requestBody["comments"] = comments
-            }
-
-            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
-            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
-
-            let output = try await shell.executeGH([
-                "api",
-                "-X", "POST",
-                "repos/\(owner)/\(repo)/pulls/\(number)/reviews",
-                "-f", jsonString
-            ])
-            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
-
-            return output
-        } catch {
-            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
-            throw error
         }
+
+        var allCommits: [Commit] = []
+
+        for (repoName, localPath) in localRepos {
+            do {
+                let commits = try await LocalGitService.shared.fetchCommits(
+                    localPath: localPath,
+                    author: author,
+                    startDate: startDate,
+                    endDate: endDate,
+                    repositoryName: repoName
+                )
+                allCommits.append(contentsOf: commits)
+            } catch {
+                // Silently fall back to API if local fetch fails
+                print("Local git fetch failed for \(repoName), falling back to API: \(error)")
+                remoteRepos.append(repoName)
+            }
+        }
+
+        if !remoteRepos.isEmpty {
+            let remoteCommits = try await fetchCommitsFromRepos(
+                author: author,
+                startDate: startDate,
+                endDate: endDate,
+                repos: remoteRepos
+            )
+            allCommits.append(contentsOf: remoteCommits)
+        }
+
+        // Sort by date (newest first)
+        return allCommits.sorted { $0.authorDate > $1.authorDate }
+    }
+
+    func fetchCommitDiffsWithLocalFallback(
+        commits: [Commit],
+        concurrencyLimit: Int = 5
+    ) async -> [String: String] {
+        var commitsByRepo: [String: [Commit]] = [:]
+        for commit in commits {
+            commitsByRepo[commit.repository, default: []].append(commit)
+        }
+
+        let mappingService = await LocalRepoMappingService.shared
+        let mappings = await mappingService.mappings
+
+        var allDiffs: [String: String] = [:]
+
+        for (repo, repoCommits) in commitsByRepo {
+            if let mapping = mappings.first(where: { $0.repositoryName == repo }) {
+                let diffs = await LocalGitService.shared.fetchCommitDiffs(
+                    commits: repoCommits,
+                    localPath: mapping.localPath,
+                    concurrencyLimit: concurrencyLimit
+                )
+                allDiffs.merge(diffs) { _, new in new }
+            } else {
+                let diffs = await fetchCommitDiffsForRepo(repo: repo, commits: repoCommits, concurrencyLimit: concurrencyLimit)
+                allDiffs.merge(diffs) { _, new in new }
+            }
+        }
+
+        return allDiffs
+    }
+
+    private func fetchCommitDiffsForRepo(
+        repo: String,
+        commits: [Commit],
+        concurrencyLimit: Int
+    ) async -> [String: String] {
+        var repoDiffs: [String: String] = [:]
+
+        for chunk in commits.chunked(into: concurrencyLimit) {
+            await withTaskGroup(of: (String, String?).self) { group in
+                for commit in chunk {
+                    group.addTask {
+                        do {
+                            let diff = try await self.fetchCommitDiff(repo: repo, sha: commit.sha)
+                            return (commit.sha, diff)
+                        } catch {
+                            // Return nil on failure - we'll proceed without the diff
+                            return (commit.sha, nil)
+                        }
+                    }
+                }
+
+                for await (sha, diff) in group {
+                    if let diff = diff {
+                        repoDiffs[sha] = diff
+                    }
+                }
+            }
+        }
+
+        return repoDiffs
     }
 }
 
