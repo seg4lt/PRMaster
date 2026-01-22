@@ -101,10 +101,6 @@ struct SettingsView: View {
 
                 Divider()
 
-                LocalRepoMappingSection(repoManager: viewModel.repoManager)
-
-                Divider()
-
                 DataSection(viewModel: viewModel)
 
                 Divider()
