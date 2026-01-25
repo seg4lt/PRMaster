@@ -200,7 +200,7 @@ class PRDiffViewModel: ObservableObject {
         do {
             // Check if we should load incremental diff
             let loadIncremental = showIncrementalDiff && reviewHistory?.lastReviewCommit != nil
-            let cacheKey = loadIncremental ? "\(pr.pr.id)-incremental" : pr.pr.id
+            _ = loadIncremental ? "\(pr.pr.id)-incremental" : pr.pr.id
 
             // Step 0: Try cache (skip network + parsing)
             if let cachedFiles = await DiffCacheService.shared.loadDiff(for: pr) {
@@ -437,6 +437,8 @@ struct PRDiffView: View {
     @State private var expandedFiles = Set<String>()
     @State private var showReviewPanel: Bool = false
     @State private var showStatsPanel: Bool = false
+    @State private var showShortcutsHelp: Bool = false
+    @State private var showChecklist: Bool = false
     @State private var hasRequestedPreview: Bool = false
     @State private var fontSize: CGFloat {
         didSet {
@@ -444,6 +446,8 @@ struct PRDiffView: View {
         }
     }
     @State private var showViewedFilesSection: Bool = false  // Start collapsed
+    @StateObject private var filterViewModel = FileFilterViewModel()
+    @StateObject private var checklistViewModel = ReviewChecklistViewModel()
 
     private let prKey: String
 
@@ -510,6 +514,22 @@ struct PRDiffView: View {
         Array(unviewedFiles.prefix(9).enumerated().map { ($0 + 1, $1) })
     }
 
+    private var filteredFiles: [ChangedFile] {
+        filterViewModel.filterFiles(
+            viewModel.files,
+            viewStatuses: viewModel.fileViewStatuses,
+            commentViewModel: viewModel.commentViewModel
+        )
+    }
+
+    private var recommendation: FileRecommendation? {
+        FileRecommendationEngine.recommendNextFile(
+            from: viewModel.files,
+            viewStatuses: viewModel.fileViewStatuses,
+            commentViewModel: viewModel.commentViewModel
+        )
+    }
+
     private func increaseFontSize() {
         fontSize = min(fontSize + 1, 30)
     }
@@ -519,6 +539,30 @@ struct PRDiffView: View {
     }
 
     var body: some View {
+        let base = mainView
+        let v1 = base.sheet(isPresented: $showReviewPanel) { reviewPanelContent }
+        let v2 = v1.sheet(isPresented: $showStatsPanel) { statsPanelContent }
+        let v3 = v2.sheet(isPresented: $showShortcutsHelp) { KeyboardShortcutsHelpPanel() }
+        let v4 = v3.sheet(isPresented: $showChecklist) { checklistPanelContent }
+        let v5 = v4.onAppear { setupKeyboardMonitoring(); updateChecklist() }
+        let v6 = v5.onChange(of: viewModel.fileViewStatuses) { _, _ in updateChecklist() }
+        let v7 = v6.onChange(of: viewModel.commentViewModel.comments) { _, _ in updateChecklist() }
+        let v8 = v7.onChange(of: viewModel.commentViewModel.drafts) { _, _ in updateChecklist() }
+        return AnyView(v8)
+    }
+
+    private var mainView: some View {
+        contentView.frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var reviewPanelContent: some View {
+        ReviewSubmissionPanel(
+            commentViewModel: viewModel.commentViewModel,
+            pr: pr
+        )
+    }
+
+    private var contentView: some View {
         VStack(spacing: 0) {
             headerView
 
@@ -531,43 +575,45 @@ struct PRDiffView: View {
             } else if viewModel.files.isEmpty {
                 emptyView
             } else if viewModel.isLoading {
-                VStack {
-                    Spacer()
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 16, height: 16)
-                    Text("Loading details...")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
+                loadingView
             } else {
                 diffFilesList
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(isPresented: $showReviewPanel) {
-            ReviewSubmissionPanel(
-                commentViewModel: viewModel.commentViewModel,
-                pr: pr
-            )
+    }
+
+    private var statsPanelContent: some View {
+        let complexities = Dictionary(uniqueKeysWithValues: viewModel.files.map { file in
+            (file.path, FileComplexityCalculator.calculate(for: file))
+        })
+
+        return ReviewStatisticsPanel(
+            pr: pr,
+            fileComplexities: complexities,
+            viewStatuses: viewModel.fileViewStatuses,
+            sessionTimer: viewModel.sessionTimer,
+            commentViewModel: viewModel.commentViewModel
+        )
+    }
+
+    private var checklistPanelContent: some View {
+        ReviewChecklistPanel(viewModel: checklistViewModel) {
+            showReviewPanel = true
         }
-        .sheet(isPresented: $showStatsPanel) {
-            ReviewStatisticsPanel(
-                pr: pr,
-                fileComplexities: Dictionary(uniqueKeysWithValues: viewModel.files.map { file in
-                    (file.path, FileComplexityCalculator.calculate(for: file))
-                }),
-                viewStatuses: viewModel.fileViewStatuses,
-                sessionTimer: viewModel.sessionTimer,
-                commentViewModel: viewModel.commentViewModel
-            )
-        }
-        .onAppear {
-            // Setup keyboard monitoring for marking files as viewed
-            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+    }
+
+    private func updateChecklist() {
+        checklistViewModel.updateChecklist(
+            files: viewModel.files,
+            viewStatuses: viewModel.fileViewStatuses,
+            commentViewModel: viewModel.commentViewModel,
+            ciStatus: nil
+        )
+    }
+
+    private func setupKeyboardMonitoring() {
+        // Setup keyboard monitoring for marking files as viewed
+        _ = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
                 guard hasRequestedPreview && !viewModel.isLoading && !viewModel.files.isEmpty else {
                     return event
                 }
@@ -723,6 +769,28 @@ struct PRDiffView: View {
                         }
                         return nil
 
+                    case "?":
+                        // Show keyboard shortcuts help
+                        showShortcutsHelp.toggle()
+                        return nil
+
+                    case "n":
+                        // Jump to recommended file
+                        if let rec = recommendation,
+                           let targetFile = viewModel.files.first(where: { $0.path == rec.filePath }) {
+                            withAnimation {
+                                expandedFiles.removeAll()
+                                expandedFiles.insert(targetFile.id)
+                                viewModel.trackFileViewStart(filePath: targetFile.path)
+                            }
+                        }
+                        return nil
+
+                    case "f":
+                        // Focus search filter
+                        filterViewModel.searchText = ""
+                        return nil
+
                     default:
                         return event
                     }
@@ -730,7 +798,6 @@ struct PRDiffView: View {
 
                 return event
             }
-        }
     }
 
     private func startPreview() {
@@ -919,6 +986,59 @@ struct PRDiffView: View {
                         .cornerRadius(4)
                     }
 
+                    // New toolbar buttons
+                    HStack(spacing: 4) {
+                        // Keyboard shortcuts help
+                        Button(action: { showShortcutsHelp = true }) {
+                            Image(systemName: "keyboard")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Keyboard shortcuts (?)")
+
+                        // Filter/search
+                        if filterViewModel.isActive() {
+                            Button(action: { filterViewModel.clear() }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "line.3.horizontal.decrease.circle")
+                                        .font(.caption)
+                                    Text("\(filteredFiles.count)")
+                                        .font(.caption2)
+                                }
+                                .foregroundColor(.orange)
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Clear filters (Esc)")
+                        } else {
+                            Button(action: { filterViewModel.searchText = "" }) {
+                                Image(systemName: "line.3.horizontal.decrease.circle")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Filter files (f)")
+                        }
+
+                        // Checklist
+                        Button(action: { showChecklist = true }) {
+                            ZStack(alignment: .topTrailing) {
+                                Image(systemName: "checklist")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+
+                                if checklistViewModel.completionPercentage < 1.0 {
+                                    Circle()
+                                        .fill(.orange)
+                                        .frame(width: 8, height: 8)
+                                        .offset(x: 4, y: -4)
+                                }
+                            }
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Review checklist")
+                    }
+
                     // Statistics button
                     Button(action: { showStatsPanel = true }) {
                         Image(systemName: "chart.bar")
@@ -1023,16 +1143,59 @@ struct PRDiffView: View {
     private var diffFilesList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                // Unviewed files section
-                if !unviewedFiles.isEmpty {
-                    sectionHeader(title: "Unviewed Files", count: unviewedFiles.count, icon: "circle", color: .orange)
+                // Filter indicator
+                if filterViewModel.isActive() {
+                    HStack {
+                        Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                            .font(.caption)
+                            .foregroundColor(.orange)
 
-                    ForEach(numberedUnviewedFiles, id: \.file.id) { tuple in
+                        Text("Filtered: \(filteredFiles.count) files")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Button("Clear") {
+                            withAnimation {
+                                filterViewModel.clear()
+                            }
+                        }
+                        .font(.caption)
+                        .buttonStyle(.borderless)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(8)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                }
+
+                // Unviewed files section
+                let displayFiles = filterViewModel.isActive() ? filteredFiles.filter { file in
+                    viewModel.fileViewStatuses[file.path]?.isViewed != true
+                } : unviewedFiles
+
+                if !displayFiles.isEmpty {
+                    sectionHeader(
+                        title: filterViewModel.isActive() ? "Filtered Files" : "Unviewed Files",
+                        count: displayFiles.count,
+                        icon: "circle",
+                        color: .orange
+                    )
+
+                    ForEach(Array(displayFiles.prefix(9).enumerated()), id: \.element.id) { tuple in
                         let (index, file) = tuple
-                        FileDiffView(
+                        let fileNumber = filterViewModel.isActive() ? nil : (index + 1)
+                        let isRecommended = recommendation?.filePath == file.path
+
+                        FileRowWithRecommendation(
                             file: file,
-                            fileNumber: index,
+                            fileNumber: fileNumber,
                             isExpanded: expandedFiles.contains(file.id),
+                            isRecommended: isRecommended,
+                            recommendation: recommendation,
                             onToggle: {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     if expandedFiles.contains(file.id) {
@@ -1045,15 +1208,13 @@ struct PRDiffView: View {
                             },
                             onViewed: {
                                 viewModel.markFileAsViewed(filePath: file.path)
-                                withAnimation(.easeInOut(duration: 0.2)) {
+                                _ = withAnimation(.easeInOut(duration: 0.2)) {
                                     expandedFiles.remove(file.id)
                                 }
                             },
-                            commitId: nil,
                             pr: pr,
                             fontSize: fontSize,
-                            diffViewModel: viewModel,
-                            commentViewModel: viewModel.commentViewModel
+                            viewModel: viewModel
                         )
                     }
                 }
@@ -1136,6 +1297,87 @@ struct PRDiffView: View {
             .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// Helper view to avoid type-checking timeout
+struct FileRowWithRecommendation: View {
+    let file: ChangedFile
+    let fileNumber: Int?
+    let isExpanded: Bool
+    let isRecommended: Bool
+    let recommendation: FileRecommendation?
+    let onToggle: () -> Void
+    let onViewed: () -> Void
+    let pr: EnrichedPullRequest
+    let fontSize: CGFloat
+    @ObservedObject var viewModel: PRDiffViewModel
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            // Pulsing glow for recommended file
+            if isRecommended {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill((recommendation?.reason.color ?? .blue).opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke((recommendation?.reason.color ?? .blue).opacity(0.3), lineWidth: 2)
+                    )
+                    .padding(.horizontal, 4)
+            }
+
+            FileDiffView(
+                file: file,
+                fileNumber: fileNumber,
+                isExpanded: isExpanded,
+                onToggle: onToggle,
+                onViewed: onViewed,
+                commitId: nil,
+                pr: pr,
+                fontSize: fontSize,
+                diffViewModel: viewModel,
+                commentViewModel: viewModel.commentViewModel
+            )
+            .padding(isRecommended ? 4 : 0)
+        }
+        .overlay(
+            // Recommendation tooltip
+            Group {
+                if isRecommended, let rec = recommendation {
+                    HStack(spacing: 6) {
+                        Image(systemName: rec.reason.icon)
+                            .font(.caption2)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Recommended")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+
+                            Text(rec.reason.description)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text("Press n")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.2))
+                            .cornerRadius(4)
+                    }
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(.regularMaterial)
+                            .shadow(radius: 4)
+                    )
+                    .padding(.leading, 12)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+            },
+            alignment: .topLeading
+        )
     }
 }
 
