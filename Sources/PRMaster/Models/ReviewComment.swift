@@ -105,13 +105,16 @@ class ReviewCommentViewModel: ObservableObject {
     @Published var drafts: [CommentDraft] = []
     @Published var isLoading: Bool = false
     @Published var error: String?
+    @Published var hasPendingReview: Bool = false
 
     private let pr: EnrichedPullRequest
     private let filePaths: [String]
+    private let prKey: String
 
     init(pr: EnrichedPullRequest, filePaths: [String] = []) {
         self.pr = pr
         self.filePaths = filePaths
+        self.prKey = "\(pr.pr.repository.nameWithOwner)#\(pr.pr.number)"
     }
 
     func loadComments() async {
@@ -132,6 +135,41 @@ class ReviewCommentViewModel: ObservableObject {
                     return true
                 }
                 return filePaths.contains(path)
+            }
+
+            // Check for pending reviews on GitHub
+            let pendingReviews = try await GitHubService.shared.fetchPendingReviews(
+                owner: pr.pr.repository.owner,
+                repo: pr.pr.repository.name,
+                number: pr.pr.number
+            )
+            hasPendingReview = !pendingReviews.isEmpty
+
+            // Load pending review comments if any
+            if let pendingReview = pendingReviews.first {
+                let pendingComments = try await GitHubService.shared.fetchPendingReviewComments(
+                    owner: pr.pr.repository.owner,
+                    repo: pr.pr.repository.name,
+                    number: pr.pr.number,
+                    reviewId: pendingReview.id
+                )
+
+                // Convert pending comments to drafts
+                for pendingComment in pendingComments {
+                    guard let path = pendingComment.path,
+                          let line = pendingComment.line,
+                          let sideString = pendingComment.side,
+                          let side = CommentSide(rawValue: sideString.lowercased()) else {
+                        continue
+                    }
+
+                    // Check if we already have a draft for this line
+                    let existingDraft = getDraftForLine(filePath: path, line: line, side: side)
+                    if existingDraft == nil {
+                        let draft = CommentDraft(filePath: path, line: line, side: side, body: pendingComment.body)
+                        drafts.append(draft)
+                    }
+                }
             }
         } catch {
             self.error = error.localizedDescription

@@ -906,6 +906,51 @@ actor GitHubService {
         }
     }
 
+    /// Fetch pending reviews for a PR
+    func fetchPendingReviews(owner: String, repo: String, number: Int) async throws -> [PullRequestReview] {
+        let start = Date()
+        let command = "api pull request reviews"
+
+        do {
+            let output = try await shell.executeGH([
+                "api",
+                "repos/\(owner)/\(repo)/pulls/\(number)/reviews",
+                "--paginate"
+            ])
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            let data = Data(output.utf8)
+            let reviews = try decoder.decode([PullRequestReview].self, from: data)
+
+            // Filter for pending reviews (draft state)
+            return reviews.filter { $0.state.uppercased() == "PENDING" }
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
+    /// Fetch pending review comments for a specific review
+    func fetchPendingReviewComments(owner: String, repo: String, number: Int, reviewId: Int) async throws -> [PullRequestReviewComment] {
+        let start = Date()
+        let command = "api pending review comments"
+
+        do {
+            let output = try await shell.executeGH([
+                "api",
+                "repos/\(owner)/\(repo)/pulls/\(number)/reviews/\(reviewId)/comments",
+                "--paginate"
+            ])
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            let data = Data(output.utf8)
+            return try decoder.decode([PullRequestReviewComment].self, from: data)
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
     func createReviewComment(
         owner: String,
         repo: String,
