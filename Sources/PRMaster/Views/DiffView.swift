@@ -458,7 +458,14 @@ struct PRDiffView: View {
             viewModel.fileViewStatuses[file.path]?.isViewed == true
         }
         .sorted { lhs, rhs in
-            // Sort by: most changes first, then alphabetically
+            // Sort by: complexity score, then most changes, then alphabetically
+            let lhsComplexity = FileComplexityCalculator.calculate(for: lhs)
+            let rhsComplexity = FileComplexityCalculator.calculate(for: rhs)
+
+            if lhsComplexity.score != rhsComplexity.score {
+                return lhsComplexity.score > rhsComplexity.score
+            }
+
             let lhsChanges = (lhs.additions ?? 0) + (lhs.deletions ?? 0)
             let rhsChanges = (rhs.additions ?? 0) + (rhs.deletions ?? 0)
             if lhsChanges != rhsChanges {
@@ -473,12 +480,19 @@ struct PRDiffView: View {
             viewModel.fileViewStatuses[file.path]?.isViewed != true
         }
         .sorted { lhs, rhs in
-            // Priority: files with comments > most changes > alphabetical
+            // Priority: comments > complexity > changes > alphabetical
             let lhsHasComments = viewModel.commentViewModel.hasCommentsForFile(filePath: lhs.path)
             let rhsHasComments = viewModel.commentViewModel.hasCommentsForFile(filePath: rhs.path)
 
             if lhsHasComments != rhsHasComments {
                 return lhsHasComments && !rhsHasComments
+            }
+
+            let lhsComplexity = FileComplexityCalculator.calculate(for: lhs)
+            let rhsComplexity = FileComplexityCalculator.calculate(for: rhs)
+
+            if lhsComplexity.score != rhsComplexity.score {
+                return lhsComplexity.score > rhsComplexity.score
             }
 
             let lhsChanges = (lhs.additions ?? 0) + (lhs.deletions ?? 0)
@@ -489,6 +503,10 @@ struct PRDiffView: View {
 
             return lhs.path < rhs.path
         }
+    }
+
+    private var numberedUnviewedFiles: [(index: Int, file: ChangedFile)] {
+        Array(unviewedFiles.prefix(9).enumerated().map { ($0 + 1, $1) })
     }
 
     private func increaseFontSize() {
@@ -542,38 +560,56 @@ struct PRDiffView: View {
                     return event
                 }
 
-                // Cmd+Shift+V: Mark first unviewed file as viewed
-                if event.modifierFlags.contains(.command) &&
-                   event.modifierFlags.contains(.shift) &&
-                   event.charactersIgnoringModifiers == "v" {
-                    if let firstUnviewed = unviewedFiles.first {
-                        viewModel.markFileAsViewed(filePath: firstUnviewed.path)
-                    }
-                    return nil
-                }
-
-                // 'v': Mark currently expanded file as viewed
-                if event.charactersIgnoringModifiers == "v" &&
-                   !event.modifierFlags.contains(.command) &&
-                   !event.modifierFlags.contains(.control) {
-                    // Find currently expanded file
-                    for file in viewModel.files {
-                        if expandedFiles.contains(file.id) {
-                            viewModel.markFileAsViewed(filePath: file.path)
-                            withAnimation {
-                                expandedFiles.remove(file.id)
-                            }
-                            break
-                        }
-                    }
-                    return nil
-                }
-
-                // Arrow keys for navigation between files
+                // Number keys 1-9 for quick file navigation
                 if !event.modifierFlags.contains(.command) &&
                    !event.modifierFlags.contains(.control) &&
                    !event.modifierFlags.contains(.option) {
 
+                    if let char = event.characters, let digit = Int(char), digit >= 1 && digit <= 9 {
+                        // Navigate to numbered file
+                        if digit <= numberedUnviewedFiles.count {
+                            let targetFile = numberedUnviewedFiles[digit - 1].file
+                            withAnimation {
+                                // Collapse currently expanded file
+                                for fileId in expandedFiles {
+                                    viewModel.trackFileViewEnd(filePath: viewModel.files.first(where: { $0.id == fileId })?.path ?? "")
+                                }
+                                expandedFiles.removeAll()
+
+                                // Expand target file
+                                expandedFiles.insert(targetFile.id)
+                                viewModel.trackFileViewStart(filePath: targetFile.path)
+                            }
+                            return nil
+                        }
+                    }
+
+                    // Cmd+Shift+V: Mark first unviewed file as viewed
+                    if event.modifierFlags.contains(.command) &&
+                       event.modifierFlags.contains(.shift) &&
+                       event.charactersIgnoringModifiers == "v" {
+                        if let firstUnviewed = unviewedFiles.first {
+                            viewModel.markFileAsViewed(filePath: firstUnviewed.path)
+                        }
+                        return nil
+                    }
+
+                    // 'v': Mark currently expanded file as viewed
+                    if event.charactersIgnoringModifiers == "v" {
+                        // Find currently expanded file
+                        for file in viewModel.files {
+                            if expandedFiles.contains(file.id) {
+                                viewModel.markFileAsViewed(filePath: file.path)
+                                withAnimation {
+                                    expandedFiles.remove(file.id)
+                                }
+                                break
+                            }
+                        }
+                        return nil
+                    }
+
+                    // Arrow keys for navigation between files
                     let allFiles = viewModel.files
                     guard let currentIndex = allFiles.firstIndex(where: { expandedFiles.contains($0.id) }) else {
                         return event
@@ -909,9 +945,11 @@ struct PRDiffView: View {
                 if !unviewedFiles.isEmpty {
                     sectionHeader(title: "Unviewed Files", count: unviewedFiles.count, icon: "circle", color: .orange)
 
-                    ForEach(unviewedFiles) { file in
+                    ForEach(numberedUnviewedFiles, id: \.file.id) { tuple in
+                        let (index, file) = tuple
                         FileDiffView(
                             file: file,
+                            fileNumber: index,
                             isExpanded: expandedFiles.contains(file.id),
                             onToggle: {
                                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -952,6 +990,7 @@ struct PRDiffView: View {
                         ForEach(viewedFiles) { file in
                             FileDiffView(
                                 file: file,
+                                fileNumber: nil,  // No numbers for viewed files
                                 isExpanded: expandedFiles.contains(file.id),
                                 onToggle: {
                                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -1020,6 +1059,7 @@ struct PRDiffView: View {
 
 struct FileDiffView: View {
     let file: ChangedFile
+    let fileNumber: Int?  // Optional number for quick navigation (1-9)
     let isExpanded: Bool
     let onToggle: () -> Void
     let onViewed: () -> Void
@@ -1047,6 +1087,10 @@ struct FileDiffView: View {
 
     private var hasComments: Bool {
         commentCount > 0
+    }
+
+    private var complexity: FileComplexity {
+        FileComplexityCalculator.calculate(for: file)
     }
 
     private var isLockFile: Bool {
@@ -1122,6 +1166,30 @@ struct FileDiffView: View {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    // Number badge for quick navigation (1-9)
+                    if let number = fileNumber {
+                        Text("\(number)")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .frame(width: 18, height: 18)
+                            .background(Color.secondary.opacity(0.7))
+                            .clipShape(Circle())
+                    }
+
+                    // Complexity indicator
+                    HStack(spacing: 2) {
+                        Image(systemName: complexity.level.icon)
+                            .font(.caption2)
+                        Text(complexity.level.rawValue)
+                            .font(.caption2)
+                    }
+                    .foregroundColor(complexity.level.displayColor)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(complexity.level.displayColor.opacity(0.15))
+                    .cornerRadius(3)
 
                     // Comment count badge
                     if hasComments {
