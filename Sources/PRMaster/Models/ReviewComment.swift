@@ -1,6 +1,77 @@
 import Foundation
 import SwiftUI
 
+// Import PendingReview models
+struct PendingReview: Codable, Identifiable {
+    let id: String
+    let prKey: String
+    var body: String?
+    let commitId: String
+    var comments: [PendingReviewComment]
+    var createdAt: Date
+    var isDirty: Bool
+
+    var totalCommentCount: Int { comments.count }
+}
+
+struct PendingReviewComment: Codable, Identifiable, Equatable {
+    let id: String
+    let path: String
+    let line: Int
+    let side: String  // LEFT or RIGHT
+    var body: String
+    var isLocalOnly: Bool  // Created locally, not yet submitted
+
+    init(id: String = UUID().uuidString, path: String, line: Int, side: String, body: String, isLocalOnly: Bool = false) {
+        self.id = id
+        self.path = path
+        self.line = line
+        self.side = side
+        self.body = body
+        self.isLocalOnly = isLocalOnly
+    }
+
+    static func == (lhs: PendingReviewComment, rhs: PendingReviewComment) -> Bool {
+        lhs.id == rhs.id
+    }
+}
+
+actor PendingReviewService {
+    static let shared = PendingReviewService()
+
+    private var pendingReviews: [String: PendingReview] = [:]
+
+    func getPendingReview(prKey: String, commitId: String) -> PendingReview {
+        if let existing = pendingReviews[prKey] {
+            return existing
+        }
+        let newReview = PendingReview(
+            id: UUID().uuidString,
+            prKey: prKey,
+            body: nil,
+            commitId: commitId,
+            comments: [],
+            createdAt: Date(),
+            isDirty: true
+        )
+        pendingReviews[prKey] = newReview
+        return newReview
+    }
+
+    func updatePendingReview(prKey: String, body: String?, comments: [PendingReviewComment]) {
+        if var existing = pendingReviews[prKey] {
+            existing.body = body
+            existing.comments = comments
+            existing.isDirty = true
+            pendingReviews[prKey] = existing
+        }
+    }
+
+    func clearPendingReview(prKey: String) {
+        pendingReviews.removeValue(forKey: prKey)
+    }
+}
+
 struct PullRequestReviewComment: Codable, Identifiable, Equatable {
     let id: Int
     let node_id: String
@@ -84,8 +155,8 @@ struct CommentDraft: Identifiable, Equatable {
     var isModified: Bool
     var isNew: Bool
 
-    init(filePath: String, line: Int, side: CommentSide, body: String = "") {
-        self.id = UUID()
+    init(id: UUID = UUID(), filePath: String, line: Int, side: CommentSide, body: String = "") {
+        self.id = id
         self.filePath = filePath
         self.line = line
         self.side = side
@@ -110,11 +181,16 @@ class ReviewCommentViewModel: ObservableObject {
     private let pr: EnrichedPullRequest
     private let filePaths: [String]
     private let prKey: String
+    private var autoSaveTimer: Timer?
 
     init(pr: EnrichedPullRequest, filePaths: [String] = []) {
         self.pr = pr
         self.filePaths = filePaths
         self.prKey = "\(pr.pr.repository.nameWithOwner)#\(pr.pr.number)"
+    }
+
+    deinit {
+        autoSaveTimer?.invalidate()
     }
 
     func loadComments() async {
@@ -171,6 +247,38 @@ class ReviewCommentViewModel: ObservableObject {
                     }
                 }
             }
+
+            // Load local drafts from storage
+            let localPendingReview = await PendingReviewService.shared.getPendingReview(
+                prKey: prKey,
+                commitId: pr.detail?.commits?.nodes.first?.commit.oid ?? ""
+            )
+
+            // Merge local drafts (don't overwrite existing drafts from GitHub)
+            for pendingComment in localPendingReview.comments {
+                guard pendingComment.isLocalOnly else { continue }
+
+                // Check if we already have a draft for this line
+                if let side = CommentSide(rawValue: pendingComment.side.lowercased()) {
+                    let existingDraft = getDraftForLine(
+                        filePath: pendingComment.path,
+                        line: pendingComment.line,
+                        side: side
+                    )
+                    if existingDraft == nil {
+                        if let uuid = UUID(uuidString: pendingComment.id) {
+                            let draft = CommentDraft(
+                                id: uuid,
+                                filePath: pendingComment.path,
+                                line: pendingComment.line,
+                                side: side,
+                                body: pendingComment.body
+                            )
+                            drafts.append(draft)
+                        }
+                    }
+                }
+            }
         } catch {
             self.error = error.localizedDescription
         }
@@ -188,6 +296,48 @@ class ReviewCommentViewModel: ObservableObject {
         if let index = drafts.firstIndex(where: { $0.id == draft.id }) {
             drafts[index].body = body
             drafts[index].isModified = true
+            scheduleAutoSave()
+        }
+    }
+
+    private func scheduleAutoSave() {
+        // Cancel existing timer
+        autoSaveTimer?.invalidate()
+
+        // Schedule auto-save after 2 seconds of inactivity
+        autoSaveTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.saveDraftsToStorage()
+            }
+        }
+    }
+
+    private func saveDraftsToStorage() {
+        let pendingReview = PendingReview(
+            id: UUID().uuidString,
+            prKey: prKey,
+            body: nil,
+            commitId: pr.detail?.commits?.nodes.first?.commit.oid ?? "",
+            comments: drafts.map { draft in
+                PendingReviewComment(
+                    id: draft.id.uuidString,
+                    path: draft.filePath,
+                    line: draft.line,
+                    side: draft.side.rawValue,
+                    body: draft.body,
+                    isLocalOnly: true
+                )
+            },
+            createdAt: Date(),
+            isDirty: true
+        )
+
+        Task {
+            await PendingReviewService.shared.updatePendingReview(
+                prKey: prKey,
+                body: nil,
+                comments: pendingReview.comments
+            )
         }
     }
 

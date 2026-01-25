@@ -57,7 +57,7 @@ class PRDiffViewModel: ObservableObject {
 
     private let pr: EnrichedPullRequest
     private let prKey: String
-    private var reviewHistory: ReviewSubmissionHistory?
+    var reviewHistory: ReviewSubmissionHistory?  // Make accessible to view
 
     init(pr: EnrichedPullRequest) {
         self.pr = pr
@@ -184,6 +184,13 @@ class PRDiffViewModel: ObservableObject {
 
                 isLoading = false
                 isInitialLoad = false
+
+                // Load comments in background
+                Task {
+                    updateCommentFilePaths()
+                    await commentViewModel.loadComments()
+                }
+
                 return
             }
 
@@ -404,7 +411,7 @@ struct PRDiffView: View {
             UserDefaults.standard.set(fontSize, forKey: "diffFontSize")
         }
     }
-    @State private var showViewedFilesSection: Bool = true
+    @State private var showViewedFilesSection: Bool = false  // Start collapsed
 
     init(pr: EnrichedPullRequest) {
         self.pr = pr
@@ -612,11 +619,26 @@ struct PRDiffView: View {
                     // Incremental diff toggle
                     if viewModel.hasPreviousReview {
                         Button(action: { viewModel.toggleIncrementalDiff() }) {
-                            HStack(spacing: 4) {
+                            HStack(spacing: 6) {
                                 Image(systemName: viewModel.showIncrementalDiff ? "clock.fill" : "clock")
                                     .font(.caption)
-                                Text(viewModel.showIncrementalDiff ? "New Changes" : "All Changes")
-                                    .font(.caption)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(viewModel.showIncrementalDiff ? "New Changes" : "All Changes")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+
+                                    if viewModel.showIncrementalDiff, let lastReviewDate = viewModel.reviewHistory?.lastReviewAt {
+                                        Text("Since \(DateFormatters.timeAgo(from: lastReviewDate))")
+                                            .font(.caption2)
+                                    }
+                                }
+
+                                if viewModel.showIncrementalDiff {
+                                    Image(systemName: "circle.fill")
+                                        .font(.caption2)
+                                        .foregroundColor(.blue)
+                                }
                             }
                             .foregroundStyle(viewModel.showIncrementalDiff ? .blue : .secondary)
                             .padding(.horizontal, 8)
@@ -847,8 +869,10 @@ struct PRDiffView: View {
 
     private func sectionHeader(title: String, count: Int, icon: String, color: Color, isExpanded: Binding<Bool>? = nil) -> some View {
         Button(action: {
-            if let isExpanded = isExpanded {
-                isExpanded.wrappedValue.toggle()
+            withAnimation(.easeInOut(duration: 0.2)) {
+                if let isExpanded = isExpanded {
+                    isExpanded.wrappedValue.toggle()
+                }
             }
         }) {
             HStack(spacing: 8) {
