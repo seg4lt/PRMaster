@@ -650,6 +650,29 @@ actor GitHubService {
         }
     }
 
+    /// Fetch incremental diff for a PR (changes since a specific commit)
+    func fetchPRIncrementalDiff(owner: String, repo: String, number: Int, sinceCommit: String) async throws -> String {
+        let start = Date()
+        let command = "gh pr diff \(number) (incremental since \(sinceCommit.prefix(7)))"
+
+        let workingDir = getLocalPathForRepo(owner: owner, repo: repo)
+
+        do {
+            // Get the diff between sinceCommit and HEAD
+            let diff = try await shell.executeGH([
+                "diff", "\(sinceCommit)...HEAD", "--", "."
+            ], timeout: 120, workingDirectory: workingDir, disablePager: true)
+
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+            return filterDiff(diff)
+        } catch {
+            print("[GitHubService] ❌ Error fetching incremental diff: \(error.localizedDescription)")
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            // Fall back to full diff on error
+            return try await fetchPRDiffRaw(owner: owner, repo: repo, number: number)
+        }
+    }
+
     /// Fetch diff for a single commit
     func fetchCommitDiff(repo: String, sha: String) async throws -> String {
         let start = Date()

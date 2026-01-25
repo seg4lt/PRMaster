@@ -167,6 +167,10 @@ class PRDiffViewModel: ObservableObject {
         let startTime = Date()
 
         do {
+            // Check if we should load incremental diff
+            let loadIncremental = showIncrementalDiff && reviewHistory?.lastReviewCommit != nil
+            let cacheKey = loadIncremental ? "\(pr.pr.id)-incremental" : pr.pr.id
+
             // Step 0: Try cache (skip network + parsing)
             if let cachedFiles = await DiffCacheService.shared.loadDiff(for: pr) {
                 print("[PRMaster] ✓ Using cached diff for \(pr.pr.repository.nameWithOwner)#\(pr.pr.number) (\(cachedFiles.count) files)")
@@ -197,17 +201,30 @@ class PRDiffViewModel: ObservableObject {
             var files = detail?.files?.nodes ?? []
             print("[PRMaster] Found \(files.count) files")
 
-            // Step 2: Fetch full diff via REST API
+            // Step 2: Fetch diff (full or incremental)
             print("[PRMaster] Step 2: Fetching diff content...")
             let diffStart = Date()
-            let diffRaw = try await GitHubService.shared.fetchPRDiffRaw(
-                owner: pr.pr.repository.owner,
-                repo: pr.pr.repository.name,
-                number: pr.pr.number
-            )
+
+            let diffRaw: String
+            if loadIncremental, let sinceCommit = reviewHistory?.lastReviewCommit {
+                print("[PRMaster] Loading incremental diff since commit: \(sinceCommit.prefix(7))")
+                diffRaw = try await GitHubService.shared.fetchPRIncrementalDiff(
+                    owner: pr.pr.repository.owner,
+                    repo: pr.pr.repository.name,
+                    number: pr.pr.number,
+                    sinceCommit: sinceCommit
+                )
+            } else {
+                print("[PRMaster] Loading full diff")
+                diffRaw = try await GitHubService.shared.fetchPRDiffRaw(
+                    owner: pr.pr.repository.owner,
+                    repo: pr.pr.repository.name,
+                    number: pr.pr.number
+                )
+            }
+
             let diffTime = Date().timeIntervalSince(diffStart)
             print("[PRMaster] ✓ Diff fetched in \(String(format: "%.2f", diffTime))s (\(diffRaw.count) bytes)")
-            print("[PRMaster] First 200 chars of diff: \(String(diffRaw.prefix(200)))")
 
             // Step 3: Parse diff and associate with files
             print("[PRMaster] Step 3: Parsing diff...")
@@ -225,7 +242,12 @@ class PRDiffViewModel: ObservableObject {
 
             self.files = files
             rebuildParsedDiffLinesCache(from: files)
-            await DiffCacheService.shared.saveDiff(for: pr, files: files)
+
+            // Only cache full diffs, not incremental ones
+            if !loadIncremental {
+                await DiffCacheService.shared.saveDiff(for: pr, files: files)
+            }
+
             print("[PRMaster] ✓ Updated files array with \(files.count) files")
 
             // Step 5: Load comments
