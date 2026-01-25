@@ -436,6 +436,7 @@ struct PRDiffView: View {
     @StateObject private var viewModel: PRDiffViewModel
     @State private var expandedFiles = Set<String>()
     @State private var showReviewPanel: Bool = false
+    @State private var showStatsPanel: Bool = false
     @State private var hasRequestedPreview: Bool = false
     @State private var fontSize: CGFloat {
         didSet {
@@ -553,6 +554,17 @@ struct PRDiffView: View {
                 pr: pr
             )
         }
+        .sheet(isPresented: $showStatsPanel) {
+            ReviewStatisticsPanel(
+                pr: pr,
+                fileComplexities: Dictionary(uniqueKeysWithValues: viewModel.files.map { file in
+                    (file.path, FileComplexityCalculator.calculate(for: file))
+                }),
+                viewStatuses: viewModel.fileViewStatuses,
+                sessionTimer: viewModel.sessionTimer,
+                commentViewModel: viewModel.commentViewModel
+            )
+        }
         .onAppear {
             // Setup keyboard monitoring for marking files as viewed
             NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -591,6 +603,14 @@ struct PRDiffView: View {
                         if let firstUnviewed = unviewedFiles.first {
                             viewModel.markFileAsViewed(filePath: firstUnviewed.path)
                         }
+                        return nil
+                    }
+
+                    // Cmd+I: Show/hide statistics panel
+                    if event.modifierFlags.contains(.command) &&
+                       !event.modifierFlags.contains(.shift) &&
+                       event.charactersIgnoringModifiers == "i" {
+                        showStatsPanel.toggle()
                         return nil
                     }
 
@@ -634,6 +654,59 @@ struct PRDiffView: View {
                                 expandedFiles.remove(allFiles[currentIndex].id)
                                 expandedFiles.insert(allFiles[currentIndex - 1].id)
                                 viewModel.trackFileViewStart(filePath: allFiles[currentIndex - 1].path)
+                            }
+                        }
+                        return nil
+
+                    case "\t":  // Tab key
+                        // Move to next unviewed file
+                        let currentFileIdx = unviewedFiles.firstIndex(where: { $0.id == allFiles[currentIndex].id })
+                        if let currentFileIdx = currentFileIdx, currentFileIdx < unviewedFiles.count - 1 {
+                            let nextFile = unviewedFiles[currentFileIdx + 1]
+                            withAnimation {
+                                expandedFiles.removeAll()
+                                expandedFiles.insert(nextFile.id)
+                                viewModel.trackFileViewStart(filePath: nextFile.path)
+                            }
+                        } else if let firstUnviewed = unviewedFiles.first {
+                            // Current file is last viewed, move to first unviewed
+                            withAnimation {
+                                expandedFiles.removeAll()
+                                expandedFiles.insert(firstUnviewed.id)
+                                viewModel.trackFileViewStart(filePath: firstUnviewed.path)
+                            }
+                        }
+                        return nil
+
+                    case "~":  // Tab key (can't use literal tab)
+                        // Move to next unviewed file
+                        let currentFileIdx = unviewedFiles.firstIndex(where: { $0.id == allFiles[currentIndex].id })
+                        if let currentFileIdx = currentFileIdx, currentFileIdx < unviewedFiles.count - 1 {
+                            let nextFile = unviewedFiles[currentFileIdx + 1]
+                            withAnimation {
+                                expandedFiles.removeAll()
+                                expandedFiles.insert(nextFile.id)
+                                viewModel.trackFileViewStart(filePath: nextFile.path)
+                            }
+                        } else if let firstUnviewed = unviewedFiles.first {
+                            // Current file is last viewed, move to first unviewed
+                            withAnimation {
+                                expandedFiles.removeAll()
+                                expandedFiles.insert(firstUnviewed.id)
+                                viewModel.trackFileViewStart(filePath: firstUnviewed.path)
+                            }
+                        }
+                        return nil
+
+                    case "":  // Shift+Tab (backtab)
+                        // Move to previous unviewed file
+                        let currentFileIdx = unviewedFiles.firstIndex(where: { $0.id == allFiles[currentIndex].id }) ?? 0
+                        if currentFileIdx > 0 {
+                            let prevFile = unviewedFiles[currentFileIdx - 1]
+                            withAnimation {
+                                expandedFiles.removeAll()
+                                expandedFiles.insert(prevFile.id)
+                                viewModel.trackFileViewStart(filePath: prevFile.path)
                             }
                         }
                         return nil
@@ -845,6 +918,15 @@ struct PRDiffView: View {
                         .background(Color.secondary.opacity(0.1))
                         .cornerRadius(4)
                     }
+
+                    // Statistics button
+                    Button(action: { showStatsPanel = true }) {
+                        Image(systemName: "chart.bar")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Show review statistics (Cmd+I)")
                 }
             }
         }
