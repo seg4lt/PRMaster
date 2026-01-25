@@ -776,13 +776,20 @@ struct PRDiffView: View {
 
                     case "n":
                         // Jump to recommended file
-                        if let rec = recommendation,
-                           let targetFile = viewModel.files.first(where: { $0.path == rec.filePath }) {
-                            withAnimation {
-                                expandedFiles.removeAll()
-                                expandedFiles.insert(targetFile.id)
-                                viewModel.trackFileViewStart(filePath: targetFile.path)
+                        if let rec = recommendation {
+                            // First try to find in all files
+                            if let targetFile = viewModel.files.first(where: { $0.path == rec.filePath }) {
+                                withAnimation {
+                                    expandedFiles.removeAll()
+                                    expandedFiles.insert(targetFile.id)
+                                    viewModel.trackFileViewStart(filePath: targetFile.path)
+                                }
+                                print("[PRMaster] Jumped to recommended file: \(targetFile.path)")
+                            } else {
+                                print("[PRMaster] Recommended file not found: \(rec.filePath)")
                             }
+                        } else {
+                            print("[PRMaster] No recommendation available")
                         }
                         return nil
 
