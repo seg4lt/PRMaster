@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 private struct ViewportWidthPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
@@ -48,19 +49,100 @@ class PRDiffViewModel: ObservableObject {
     @Published var error: String?
     @Published var files: [ChangedFile] = []
     @Published var commentViewModel: ReviewCommentViewModel
+    @Published var fileViewStatuses: [String: FileViewStatus] = [:]
+    @Published var showIncrementalDiff = false
 
     private var parsedDiffLinesCache: [String: [DiffLine]] = [:]
+    private var viewStartTimes: [String: Date] = [:]
 
     private let pr: EnrichedPullRequest
+    private let prKey: String
+    private var reviewHistory: ReviewSubmissionHistory?
 
     init(pr: EnrichedPullRequest) {
         self.pr = pr
+        self.prKey = "\(pr.pr.repository.nameWithOwner)#\(pr.pr.number)"
         self.commentViewModel = ReviewCommentViewModel(pr: pr, filePaths: [])
+
+        // Load review history
+        Task {
+            let history = await ReviewHistoryService.shared.getHistory(prKey: prKey)
+            await MainActor.run {
+                self.reviewHistory = history
+                self.showIncrementalDiff = history.lastReviewCommit != nil
+            }
+        }
     }
 
     func updateCommentFilePaths() {
         let filePaths = files.map { $0.path }
         commentViewModel = ReviewCommentViewModel(pr: pr, filePaths: filePaths)
+
+        // Update file view statuses
+        Task {
+            let statuses = await FileViewStatusService.shared.getStatusForPR(prKey: prKey, filePaths: filePaths)
+            await MainActor.run {
+                self.fileViewStatuses = statuses
+            }
+        }
+    }
+
+    /// Mark a file as viewed
+    func markFileAsViewed(filePath: String) {
+        Task {
+            // Calculate view duration
+            var duration: TimeInterval? = nil
+            if let startTime = viewStartTimes[filePath] {
+                duration = Date().timeIntervalSince(startTime)
+                viewStartTimes.removeValue(forKey: filePath)
+            }
+
+            await FileViewStatusService.shared.markAsViewed(prKey: prKey, filePath: filePath, duration: duration)
+
+            // Update local cache
+            if var status = fileViewStatuses[filePath] {
+                status.isViewed = true
+                status.viewedAt = Date()
+                status.viewDuration = duration
+                fileViewStatuses[filePath] = status
+            }
+        }
+    }
+
+    /// Mark a file as unviewed
+    func markFileAsUnviewed(filePath: String) {
+        Task {
+            await FileViewStatusService.shared.markAsUnviewed(prKey: prKey, filePath: filePath)
+
+            // Update local cache
+            if var status = fileViewStatuses[filePath] {
+                status.isViewed = false
+                status.viewedAt = nil
+                status.viewDuration = nil
+                fileViewStatuses[filePath] = status
+            }
+        }
+    }
+
+    /// Track when user starts viewing a file
+    func trackFileViewStart(filePath: String) {
+        viewStartTimes[filePath] = Date()
+    }
+
+    /// Get review progress
+    var reviewProgress: (viewed: Int, total: Int) {
+        let viewedCount = fileViewStatuses.values.filter { $0.isViewed }.count
+        return (viewedCount, fileViewStatuses.count)
+    }
+
+    /// Check if user has previously reviewed this PR
+    var hasPreviousReview: Bool {
+        reviewHistory?.lastReviewCommit != nil
+    }
+
+    /// Toggle incremental diff mode
+    func toggleIncrementalDiff() {
+        showIncrementalDiff.toggle()
     }
 
     func getDiffLines(for file: ChangedFile) -> [DiffLine] {
@@ -300,11 +382,24 @@ struct PRDiffView: View {
             UserDefaults.standard.set(fontSize, forKey: "diffFontSize")
         }
     }
+    @State private var showViewedFilesSection: Bool = true
 
     init(pr: EnrichedPullRequest) {
         self.pr = pr
         self._viewModel = StateObject(wrappedValue: PRDiffViewModel(pr: pr))
         self._fontSize = State(initialValue: UserDefaults.standard.object(forKey: "diffFontSize") as? CGFloat ?? 13.0)
+    }
+
+    private var viewedFiles: [ChangedFile] {
+        viewModel.files.filter { file in
+            viewModel.fileViewStatuses[file.path]?.isViewed == true
+        }
+    }
+
+    private var unviewedFiles: [ChangedFile] {
+        viewModel.files.filter { file in
+            viewModel.fileViewStatuses[file.path]?.isViewed != true
+        }
     }
 
     private func increaseFontSize() {
@@ -351,6 +446,43 @@ struct PRDiffView: View {
                 pr: pr
             )
         }
+        .onAppear {
+            // Setup keyboard monitoring for marking files as viewed
+            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard hasRequestedPreview && !viewModel.isLoading && !viewModel.files.isEmpty else {
+                    return event
+                }
+
+                // Cmd+Shift+V: Mark first unviewed file as viewed
+                if event.modifierFlags.contains(.command) &&
+                   event.modifierFlags.contains(.shift) &&
+                   event.charactersIgnoringModifiers == "v" {
+                    if let firstUnviewed = unviewedFiles.first {
+                        viewModel.markFileAsViewed(filePath: firstUnviewed.path)
+                    }
+                    return nil
+                }
+
+                // 'v': Mark currently expanded file as viewed
+                if event.charactersIgnoringModifiers == "v" &&
+                   !event.modifierFlags.contains(.command) &&
+                   !event.modifierFlags.contains(.control) {
+                    // Find currently expanded file
+                    for file in viewModel.files {
+                        if expandedFiles.contains(file.id) {
+                            viewModel.markFileAsViewed(filePath: file.path)
+                            withAnimation {
+                                expandedFiles.remove(file.id)
+                            }
+                            break
+                        }
+                    }
+                    return nil
+                }
+
+                return event
+            }
+        }
     }
 
     private func startPreview() {
@@ -375,6 +507,22 @@ struct PRDiffView: View {
                     Text("#\(pr.pr.number)")
                         .foregroundStyle(.secondary)
                         .font(.caption)
+
+                    // Review progress indicator
+                    if !viewModel.files.isEmpty {
+                        let progress = viewModel.reviewProgress
+                        HStack(spacing: 4) {
+                            Image(systemName: "eye.fill")
+                                .font(.caption2)
+                            Text("\(progress.viewed)/\(progress.total)")
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(progress.viewed == progress.total ? .green : .secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background((progress.viewed == progress.total ? Color.green : Color.secondary).opacity(0.1))
+                        .cornerRadius(4)
+                    }
                 }
             }
 
@@ -389,6 +537,25 @@ struct PRDiffView: View {
                 .disabled(viewModel.isLoading)
             } else if !viewModel.isLoading && !viewModel.files.isEmpty {
                 HStack(spacing: 12) {
+                    // Incremental diff toggle
+                    if viewModel.hasPreviousReview {
+                        Button(action: { viewModel.toggleIncrementalDiff() }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: viewModel.showIncrementalDiff ? "clock.fill" : "clock")
+                                    .font(.caption)
+                                Text(viewModel.showIncrementalDiff ? "New Changes" : "All Changes")
+                                    .font(.caption)
+                            }
+                            .foregroundStyle(viewModel.showIncrementalDiff ? .blue : .secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(viewModel.showIncrementalDiff ? Color.blue.opacity(0.1) : Color.clear)
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Toggle between full diff and changes since your last review")
+                    }
+
                     HStack(spacing: 4) {
                         Button(action: decreaseFontSize) {
                             Image(systemName: "minus.circle")
@@ -432,7 +599,7 @@ struct PRDiffView: View {
                         .buttonStyle(.plain)
                     }
 
-                    Text("\(viewModel.files.count) file\(viewModel.files.count == 1 ? "" : "s") changed")
+                    Text("\(viewModel.files.count) file\(viewModel.files.count == 1 ? "" : "s")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -531,30 +698,114 @@ struct PRDiffView: View {
     private var diffFilesList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(viewModel.files) { file in
-                    FileDiffView(
-                        file: file,
-                        isExpanded: expandedFiles.contains(file.id),
-                        onToggle: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                if expandedFiles.contains(file.id) {
-                                    expandedFiles.remove(file.id)
-                                } else {
-                                    expandedFiles.insert(file.id)
+                // Unviewed files section
+                if !unviewedFiles.isEmpty {
+                    sectionHeader(title: "Unviewed Files", count: unviewedFiles.count, icon: "circle", color: .orange)
+
+                    ForEach(unviewedFiles) { file in
+                        FileDiffView(
+                            file: file,
+                            isExpanded: expandedFiles.contains(file.id),
+                            onToggle: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    if expandedFiles.contains(file.id) {
+                                        expandedFiles.remove(file.id)
+                                    } else {
+                                        expandedFiles.insert(file.id)
+                                        viewModel.trackFileViewStart(filePath: file.path)
+                                    }
                                 }
-                            }
-                        },
-                        commitId: nil,
-                        pr: pr,
-                        fontSize: fontSize,
-                        diffViewModel: viewModel,
-                        commentViewModel: viewModel.commentViewModel
+                            },
+                            onViewed: {
+                                viewModel.markFileAsViewed(filePath: file.path)
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    expandedFiles.remove(file.id)
+                                }
+                            },
+                            commitId: nil,
+                            pr: pr,
+                            fontSize: fontSize,
+                            diffViewModel: viewModel,
+                            commentViewModel: viewModel.commentViewModel
+                        )
+                    }
+                }
+
+                // Viewed files section
+                if !viewedFiles.isEmpty {
+                    sectionHeader(
+                        title: "Viewed Files",
+                        count: viewedFiles.count,
+                        icon: "checkmark.circle.fill",
+                        color: .green,
+                        isExpanded: $showViewedFilesSection
                     )
+
+                    if showViewedFilesSection {
+                        ForEach(viewedFiles) { file in
+                            FileDiffView(
+                                file: file,
+                                isExpanded: expandedFiles.contains(file.id),
+                                onToggle: {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        if expandedFiles.contains(file.id) {
+                                            expandedFiles.remove(file.id)
+                                        } else {
+                                            expandedFiles.insert(file.id)
+                                        }
+                                    }
+                                },
+                                onViewed: {
+                                    viewModel.markFileAsUnviewed(filePath: file.path)
+                                },
+                                commitId: nil,
+                                pr: pr,
+                                fontSize: fontSize,
+                                diffViewModel: viewModel,
+                                commentViewModel: viewModel.commentViewModel
+                            )
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func sectionHeader(title: String, count: Int, icon: String, color: Color, isExpanded: Binding<Bool>? = nil) -> some View {
+        Button(action: {
+            if let isExpanded = isExpanded {
+                isExpanded.wrappedValue.toggle()
+            }
+        }) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .foregroundColor(color)
+                    .font(.caption)
+
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.primary)
+
+                Text("(\(count))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
+                if let isExpanded = isExpanded {
+                    Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -562,6 +813,7 @@ struct FileDiffView: View {
     let file: ChangedFile
     let isExpanded: Bool
     let onToggle: () -> Void
+    let onViewed: () -> Void
     var commitId: String? = nil
     let pr: EnrichedPullRequest
     let fontSize: CGFloat
@@ -574,6 +826,10 @@ struct FileDiffView: View {
 
     private var directory: String {
         (file.path as NSString).deletingLastPathComponent
+    }
+
+    private var isViewed: Bool {
+        diffViewModel.fileViewStatuses[file.path]?.isViewed == true
     }
 
     private var isLockFile: Bool {
@@ -642,52 +898,76 @@ struct FileDiffView: View {
     }
 
     private var fileHeader: some View {
-        Button(action: onToggle) {
-            HStack(alignment: .center, spacing: 8) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 0) {
+            // Main file header button
+            Button(action: onToggle) {
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                Image(systemName: changeIcon)
-                    .font(.caption)
-                    .foregroundColor(changeColor)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(fileName)
-                        .font(.system(.body, design: .monospaced))
-                        .fontWeight(.medium)
-
-                    if !directory.isEmpty && directory != "." {
-                        Text(directory)
+                    // View status indicator
+                    if isViewed {
+                        Image(systemName: "checkmark.circle.fill")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundColor(.green)
+                    } else {
+                        Image(systemName: "circle")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+
+                    Image(systemName: changeIcon)
+                        .font(.caption)
+                        .foregroundColor(changeColor)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(fileName)
+                            .font(.system(.body, design: .monospaced))
+                            .fontWeight(.medium)
+
+                        if !directory.isEmpty && directory != "." {
+                            Text(directory)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    if let additions = file.additions, let deletions = file.deletions {
+                        HStack(spacing: 8) {
+                            HStack(spacing: 2) {
+                                Text("+\(additions)")
+                                    .foregroundColor(.green)
+                            }
+                            .font(.caption)
+
+                            HStack(spacing: 2) {
+                                Text("-\(deletions)")
+                                    .foregroundColor(.red)
+                            }
+                            .font(.caption)
+                        }
                     }
                 }
-
-                Spacer()
-
-                if let additions = file.additions, let deletions = file.deletions {
-                    HStack(spacing: 8) {
-                        HStack(spacing: 2) {
-                            Text("+\(additions)")
-                                .foregroundColor(.green)
-                        }
-                        .font(.caption)
-
-                        HStack(spacing: 2) {
-                            Text("-\(deletions)")
-                                .foregroundColor(.red)
-                        }
-                        .font(.caption)
-                    }
-                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(isExpanded ? Color.accentColor.opacity(0.1) : Color(NSColor.controlBackgroundColor))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(isExpanded ? Color.accentColor.opacity(0.1) : Color(NSColor.controlBackgroundColor))
             .buttonStyle(.plain)
+
+            // Mark as viewed/unviewed button
+            Button(action: onViewed) {
+                Image(systemName: isViewed ? "eye.slash" : "eye")
+                    .font(.caption)
+                    .foregroundColor(isViewed ? .secondary : .blue)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
+            .help(isViewed ? "Mark as unviewed" : "Mark as viewed")
         }
-        .buttonStyle(.plain)
     }
 
     private var lockFileWarning: some View {

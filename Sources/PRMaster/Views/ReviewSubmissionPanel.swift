@@ -208,16 +208,29 @@ struct ReviewSubmissionPanel: View {
                     ]
                 }
 
+                let commitId = pr.detail?.commits?.nodes.first?.commit.oid ?? ""
+
                 // Submit review
                 _ = try await GitHubService.shared.createPullRequestReview(
                     owner: pr.pr.repository.owner,
                     repo: pr.pr.repository.name,
                     number: pr.pr.number,
-                    commitId: pr.detail?.commits?.nodes.first?.commit.oid ?? "",
+                    commitId: commitId,
                     event: reviewEvent.rawValue,
                     body: reviewBody,
                     comments: commentsArray
                 )
+
+                // Record review history for incremental diffs
+                let prKey = "\(pr.pr.repository.nameWithOwner)#\(pr.pr.number)"
+                await ReviewHistoryService.shared.recordReview(
+                    prKey: prKey,
+                    commitId: commitId,
+                    event: reviewEvent.rawValue
+                )
+
+                // Clear file view status after successful review
+                await FileViewStatusService.shared.clearPR(prKey: prKey)
 
                 // Clear drafts and dismiss
                 commentViewModel.clearDrafts()
