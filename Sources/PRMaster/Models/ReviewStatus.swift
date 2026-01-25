@@ -81,6 +81,7 @@ enum ReviewState: String, Codable {
 struct Review: Codable, Identifiable {
     let author: ReviewAuthor?
     let state: ReviewState
+    let submittedAt: Date?
 
     var id: String {
         "\(author?.login ?? "unknown")-\(state.rawValue)"

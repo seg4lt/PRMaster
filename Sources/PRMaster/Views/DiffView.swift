@@ -502,6 +502,56 @@ struct PRDiffView: View {
                     return nil
                 }
 
+                // Arrow keys for navigation between files
+                if !event.modifierFlags.contains(.command) &&
+                   !event.modifierFlags.contains(.control) &&
+                   !event.modifierFlags.contains(.option) {
+
+                    let allFiles = viewModel.files
+                    guard let currentIndex = allFiles.firstIndex(where: { expandedFiles.contains($0.id) }) else {
+                        return event
+                    }
+
+                    switch event.charactersIgnoringModifiers {
+                    case "j":
+                        // Move to next file and expand it
+                        if currentIndex < allFiles.count - 1 {
+                            withAnimation {
+                                expandedFiles.remove(allFiles[currentIndex].id)
+                                expandedFiles.insert(allFiles[currentIndex + 1].id)
+                                viewModel.trackFileViewStart(filePath: allFiles[currentIndex + 1].path)
+                            }
+                        }
+                        return nil
+
+                    case "k":
+                        // Move to previous file and expand it
+                        if currentIndex > 0 {
+                            withAnimation {
+                                expandedFiles.remove(allFiles[currentIndex].id)
+                                expandedFiles.insert(allFiles[currentIndex - 1].id)
+                                viewModel.trackFileViewStart(filePath: allFiles[currentIndex - 1].path)
+                            }
+                        }
+                        return nil
+
+                    case " ":
+                        // Toggle current file expansion
+                        withAnimation {
+                            if expandedFiles.contains(allFiles[currentIndex].id) {
+                                expandedFiles.remove(allFiles[currentIndex].id)
+                            } else {
+                                expandedFiles.insert(allFiles[currentIndex].id)
+                                viewModel.trackFileViewStart(filePath: allFiles[currentIndex].path)
+                            }
+                        }
+                        return nil
+
+                    default:
+                        return event
+                    }
+                }
+
                 return event
             }
         }

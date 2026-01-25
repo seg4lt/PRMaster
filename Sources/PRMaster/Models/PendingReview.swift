@@ -4,9 +4,9 @@ import Foundation
 struct PendingReview: Codable, Identifiable {
     let id: String
     let prKey: String
-    let body: String?
+    var body: String?
     let commitId: String
-    let comments: [PendingReviewComment]
+    var comments: [PendingReviewComment]
     var createdAt: Date
     var isDirty: Bool  // Local changes not synced to GitHub
 

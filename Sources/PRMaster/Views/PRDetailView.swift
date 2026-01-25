@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 struct PRDetailView: View {
     let pr: EnrichedPullRequest
@@ -119,33 +120,67 @@ struct PRDetailView: View {
     }
 
     private var actionsSection: some View {
-        HStack(spacing: 12) {
-            Button {
-                if let url = URL(string: pr.pr.url) {
-                    NSWorkspace.shared.open(url)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Button {
+                    if let url = URL(string: pr.pr.url) {
+                        NSWorkspace.shared.open(url)
+                    }
+                } label: {
+                    Label("Open in Browser", systemImage: "safari")
                 }
-            } label: {
-                Label("Open in Browser", systemImage: "safari")
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
 
-            Button {
-                onReviewPR?()
-            } label: {
-                Label("Review PR", systemImage: "pencil")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+                Button {
+                    onReviewPR?()
+                } label: {
+                    Label("Review PR", systemImage: "pencil")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
 
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(pr.pr.url, forType: .string)
-            } label: {
-                Label("Copy Link", systemImage: "doc.on.clipboard")
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(pr.pr.url, forType: .string)
+                } label: {
+                    Label("Copy Link", systemImage: "doc.on.clipboard")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+
+            // Quick review actions
+            QuickReviewActions(
+                pr: pr,
+                onApprove: {
+                    Task {
+                        try? await GitHubService.shared.createPullRequestReview(
+                            owner: pr.pr.repository.owner,
+                            repo: pr.pr.repository.name,
+                            number: pr.pr.number,
+                            commitId: pr.detail?.commits?.nodes.first?.commit.oid ?? "",
+                            event: "APPROVE",
+                            body: ""
+                        )
+                        // Record review
+                        let prKey = "\(pr.pr.repository.nameWithOwner)#\(pr.pr.number)"
+                        await ReviewHistoryService.shared.recordReview(
+                            prKey: prKey,
+                            commitId: pr.detail?.commits?.nodes.first?.commit.oid ?? "",
+                            event: "APPROVE"
+                        )
+                    }
+                },
+                onRequestChanges: {
+                    // This would open a dialog for changes
+                    onReviewPR?()
+                },
+                onComment: {
+                    // This would open a dialog for comment
+                    onReviewPR?()
+                }
+            )
         }
     }
 }
