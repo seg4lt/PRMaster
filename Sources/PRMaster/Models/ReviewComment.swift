@@ -369,4 +369,14 @@ class ReviewCommentViewModel: ObservableObject {
         !getCommentsForLine(filePath: filePath, line: line, side: side).isEmpty ||
         getDraftForLine(filePath: filePath, line: line, side: side) != nil
     }
+
+    func hasCommentsForFile(filePath: String) -> Bool {
+        comments.contains { $0.path == filePath } || drafts.contains { $0.filePath == filePath }
+    }
+
+    func getCommentCountForFile(filePath: String) -> Int {
+        let commentCount = comments.filter { $0.path == filePath }.count
+        let draftCount = drafts.filter { $0.filePath == filePath }.count
+        return commentCount + draftCount
+    }
 }

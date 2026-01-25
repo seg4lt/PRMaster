@@ -51,6 +51,7 @@ class PRDiffViewModel: ObservableObject {
     @Published var commentViewModel: ReviewCommentViewModel
     @Published var fileViewStatuses: [String: FileViewStatus] = [:]
     @Published var showIncrementalDiff = false
+    @Published var sessionTimer = ReviewSessionTimer()
 
     private var parsedDiffLinesCache: [String: [DiffLine]] = [:]
     private var viewStartTimes: [String: Date] = [:]
@@ -127,6 +128,12 @@ class PRDiffViewModel: ObservableObject {
     /// Track when user starts viewing a file
     func trackFileViewStart(filePath: String) {
         viewStartTimes[filePath] = Date()
+        sessionTimer.startFile(filePath)
+    }
+
+    /// Track when user stops viewing a file
+    func trackFileViewEnd(filePath: String) {
+        sessionTimer.stopFile(filePath)
     }
 
     /// Get review progress
@@ -143,6 +150,30 @@ class PRDiffViewModel: ObservableObject {
     /// Toggle incremental diff mode
     func toggleIncrementalDiff() {
         showIncrementalDiff.toggle()
+    }
+
+    /// Mark all files as viewed
+    func markAllFilesAsViewed(files: [ChangedFile]) async {
+        for file in files {
+            await FileViewStatusService.shared.markAsViewed(prKey: prKey, filePath: file.path)
+            if var status = fileViewStatuses[file.path] {
+                status.isViewed = true
+                status.viewedAt = Date()
+                fileViewStatuses[file.path] = status
+            }
+        }
+    }
+
+    /// Clear all viewed status
+    func clearAllViewedStatus(prKey: String) async {
+        await FileViewStatusService.shared.resetPR(prKey: prKey)
+        for key in fileViewStatuses.keys {
+            if var status = fileViewStatuses[key] {
+                status.isViewed = false
+                status.viewedAt = nil
+                fileViewStatuses[key] = status
+            }
+        }
     }
 
     func getDiffLines(for file: ChangedFile) -> [DiffLine] {
@@ -413,8 +444,11 @@ struct PRDiffView: View {
     }
     @State private var showViewedFilesSection: Bool = false  // Start collapsed
 
+    private let prKey: String
+
     init(pr: EnrichedPullRequest) {
         self.pr = pr
+        self.prKey = "\(pr.pr.repository.nameWithOwner)#\(pr.pr.number)"
         self._viewModel = StateObject(wrappedValue: PRDiffViewModel(pr: pr))
         self._fontSize = State(initialValue: UserDefaults.standard.object(forKey: "diffFontSize") as? CGFloat ?? 13.0)
     }
@@ -423,11 +457,37 @@ struct PRDiffView: View {
         viewModel.files.filter { file in
             viewModel.fileViewStatuses[file.path]?.isViewed == true
         }
+        .sorted { lhs, rhs in
+            // Sort by: most changes first, then alphabetically
+            let lhsChanges = (lhs.additions ?? 0) + (lhs.deletions ?? 0)
+            let rhsChanges = (rhs.additions ?? 0) + (rhs.deletions ?? 0)
+            if lhsChanges != rhsChanges {
+                return lhsChanges > rhsChanges
+            }
+            return lhs.path < rhs.path
+        }
     }
 
     private var unviewedFiles: [ChangedFile] {
         viewModel.files.filter { file in
             viewModel.fileViewStatuses[file.path]?.isViewed != true
+        }
+        .sorted { lhs, rhs in
+            // Priority: files with comments > most changes > alphabetical
+            let lhsHasComments = viewModel.commentViewModel.hasCommentsForFile(filePath: lhs.path)
+            let rhsHasComments = viewModel.commentViewModel.hasCommentsForFile(filePath: rhs.path)
+
+            if lhsHasComments != rhsHasComments {
+                return lhsHasComments && !rhsHasComments
+            }
+
+            let lhsChanges = (lhs.additions ?? 0) + (lhs.deletions ?? 0)
+            let rhsChanges = (rhs.additions ?? 0) + (rhs.deletions ?? 0)
+            if lhsChanges != rhsChanges {
+                return lhsChanges > rhsChanges
+            }
+
+            return lhs.path < rhs.path
         }
     }
 
@@ -601,6 +661,43 @@ struct PRDiffView: View {
                         .padding(.vertical, 2)
                         .background((progress.viewed == progress.total ? Color.green : Color.secondary).opacity(0.1))
                         .cornerRadius(4)
+
+                        // Bulk actions menu
+                        Menu {
+                            Button("Mark All as Viewed") {
+                                Task {
+                                    await viewModel.markAllFilesAsViewed(files: viewModel.files)
+                                }
+                            }
+                            .keyboardShortcut("a", modifiers: [.command, .shift])
+
+                            Button("Clear All Viewed Status") {
+                                Task {
+                                    await viewModel.clearAllViewedStatus(prKey: prKey)
+                                }
+                            }
+
+                            Divider()
+
+                            Button("Approve All Viewed") {
+                                // Quick approve all viewed files
+                                Task {
+                                    try? await GitHubService.shared.createPullRequestReview(
+                                        owner: pr.pr.repository.owner,
+                                        repo: pr.pr.repository.name,
+                                        number: pr.pr.number,
+                                        commitId: pr.detail?.commits?.nodes.first?.commit.oid ?? "",
+                                        event: "APPROVE",
+                                        body: "Approved \(progress.viewed) files"
+                                    )
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .menuStyle(.borderlessButton)
                     }
                 }
             }
@@ -696,6 +793,22 @@ struct PRDiffView: View {
                     Text("\(viewModel.files.count) file\(viewModel.files.count == 1 ? "" : "s")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    // Session timer
+                    if viewModel.sessionTimer.isRunning {
+                        HStack(spacing: 4) {
+                            Image(systemName: "timer")
+                                .font(.caption2)
+                            Text(viewModel.sessionTimer.formattedTotalTime)
+                                .font(.caption2)
+                                .monospacedDigit()
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.1))
+                        .cornerRadius(4)
+                    }
                 }
             }
         }
@@ -928,6 +1041,14 @@ struct FileDiffView: View {
         diffViewModel.fileViewStatuses[file.path]?.isViewed == true
     }
 
+    private var commentCount: Int {
+        commentViewModel.getCommentCountForFile(filePath: file.path)
+    }
+
+    private var hasComments: Bool {
+        commentCount > 0
+    }
+
     private var isLockFile: Bool {
         let lockFilePatterns = [
             "package-lock.json",
@@ -1001,6 +1122,22 @@ struct FileDiffView: View {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    // Comment count badge
+                    if hasComments {
+                        HStack(spacing: 2) {
+                            Text("\(commentCount)")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                            Image(systemName: "bubble.left.fill")
+                                .font(.caption2)
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.blue)
+                        .cornerRadius(10)
+                    }
 
                     // View status indicator
                     if isViewed {
