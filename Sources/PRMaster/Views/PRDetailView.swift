@@ -148,7 +148,7 @@ struct CheckBadge: View {
         HStack(spacing: 4) {
             Image(systemName: check.icon)
                 .foregroundColor(check.color)
-            Text(check.displayName)
+            Text(check.badgeDisplayName)
                 .lineLimit(1)
         }
         .font(.caption)
@@ -156,6 +156,7 @@ struct CheckBadge: View {
         .padding(.vertical, 4)
         .background(check.color.opacity(0.1))
         .clipShape(Capsule())
+        .help(check.displayName)
         .onTapGesture {
             if let urlString = check.url, let url = URL(string: urlString) {
                 NSWorkspace.shared.open(url)

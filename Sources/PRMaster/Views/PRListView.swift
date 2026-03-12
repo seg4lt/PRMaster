@@ -8,6 +8,7 @@ struct PRListView: View {
     let isCompact: Bool
 
     @State private var selectedPR: EnrichedPullRequest?
+    @FocusState private var isKeyboardFocused: Bool
 
     init(prs: [EnrichedPullRequest], currentUser: String? = nil, isLoading: Bool, emptyMessage: String, isCompact: Bool = true) {
         self.prs = prs
@@ -31,6 +32,19 @@ struct PRListView: View {
                 Divider()
                 PRDetailView(pr: selected)
             }
+        }
+        .focusable()
+        .focused($isKeyboardFocused)
+        .onAppear {
+            isKeyboardFocused = true
+        }
+        .onChange(of: selectedPR?.id) { _, _ in
+            isKeyboardFocused = true
+        }
+        .onKeyPress(.escape) {
+            guard selectedPR != nil else { return .ignored }
+            selectedPR = nil
+            return .handled
         }
     }
 
@@ -77,6 +91,7 @@ struct PRListView: View {
                             isCompact: isCompact
                         )
                         .onTapGesture {
+                            isKeyboardFocused = true
                             if selectedPR?.id == pr.id {
                                 selectedPR = nil
                             } else {

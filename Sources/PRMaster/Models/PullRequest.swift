@@ -214,6 +214,8 @@ struct CheckContextNodes: Codable {
 }
 
 struct CheckContext: Codable, Identifiable {
+    private static let badgeCharacterLimit = 30
+
     // CheckRun fields (GitHub Actions, etc.)
     let name: String?
     let status: String?      // QUEUED, IN_PROGRESS, COMPLETED
@@ -228,6 +230,14 @@ struct CheckContext: Codable, Identifiable {
 
     var displayName: String {
         name ?? context ?? "Unknown"
+    }
+
+    var badgeDisplayName: String {
+        let maxLength = Self.badgeCharacterLimit
+        guard displayName.count > maxLength else { return displayName }
+
+        let visibleCharacters = maxLength - 3
+        return String(displayName.prefix(visibleCharacters)) + "..."
     }
 
     var url: String? {

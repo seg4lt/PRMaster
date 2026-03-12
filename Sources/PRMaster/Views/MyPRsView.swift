@@ -3,6 +3,7 @@ import SwiftUI
 struct MyPRsView: View {
     @ObservedObject var viewModel: PRListViewModel
     @State private var selectedPR: EnrichedPullRequest?
+    @FocusState private var isKeyboardFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,6 +19,19 @@ struct MyPRsView: View {
                 Divider()
                 PRDetailView(pr: selected)
             }
+        }
+        .focusable()
+        .focused($isKeyboardFocused)
+        .onAppear {
+            isKeyboardFocused = true
+        }
+        .onChange(of: selectedPR?.id) { _, _ in
+            isKeyboardFocused = true
+        }
+        .onKeyPress(.escape) {
+            guard selectedPR != nil else { return .ignored }
+            selectedPR = nil
+            return .handled
         }
     }
 
@@ -57,6 +71,7 @@ struct MyPRsView: View {
                     VStack(spacing: 0) {
                         MyPRRowView(pr: pr, isSelected: selectedPR?.id == pr.id)
                             .onTapGesture {
+                                isKeyboardFocused = true
                                 if selectedPR?.id == pr.id {
                                     selectedPR = nil
                                 } else {
