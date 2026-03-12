@@ -6,6 +6,7 @@ enum Tab: String, CaseIterable {
     case toReview = "Review"
     case reviewed = "Done"
     case myPRs = "Mine"
+    case conversation = "Conversation"
     case filters = "Filters"
     case settings = "Settings"
     case apiStats = "API"
@@ -16,6 +17,7 @@ enum Tab: String, CaseIterable {
         case .toReview: return "tray.and.arrow.down.fill"
         case .reviewed: return "checkmark.circle.fill"
         case .myPRs: return "person.fill"
+        case .conversation: return "bubble.left.and.bubble.right.fill"
         case .filters: return "bell.badge.fill"
         case .settings: return "gearshape.fill"
         case .apiStats: return "chart.bar.fill"
@@ -28,6 +30,7 @@ enum Tab: String, CaseIterable {
         case .toReview: return "To Review"
         case .reviewed: return "Reviewed"
         case .myPRs: return "My PRs"
+        case .conversation: return "Conversation"
         case .filters: return "Filters"
         case .settings: return "Settings"
         case .apiStats: return "API Stats"
@@ -35,12 +38,19 @@ enum Tab: String, CaseIterable {
         }
     }
 
+    func displayName(isCompact: Bool) -> String {
+        if isCompact && self == .conversation {
+            return "Conv"
+        }
+        return rawValue
+    }
+
     static var compactTabs: [Tab] {
-        [.toReview, .reviewed, .myPRs]
+        [.toReview, .reviewed, .myPRs, .conversation]
     }
 
     static var fullWindowTabs: [Tab] {
-        [.toReview, .reviewed, .myPRs, .filters, .ai, .apiStats, .settings]
+        [.toReview, .reviewed, .myPRs, .conversation, .filters, .ai, .apiStats, .settings]
     }
 }
 
@@ -116,6 +126,10 @@ struct MainView: View {
             selectedTab = .myPRs
             return .handled
         }
+        .onKeyPress(characters: CharacterSet(charactersIn: "4")) { _ in
+            selectedTab = .conversation
+            return .handled
+        }
         .onKeyPress(.leftArrow) {
             navigateToPreviousTab()
             return .handled
@@ -179,6 +193,7 @@ struct MainView: View {
         case .toReview: return viewModel.toReviewPRs.count
         case .reviewed: return viewModel.reviewedPRs.count
         case .myPRs: return viewModel.myOpenPRs.count
+        case .conversation: return viewModel.conversationCount
         case .filters, .settings, .apiStats, .ai: return 0
         }
     }
@@ -259,6 +274,11 @@ struct MainView: View {
             }
         case .myPRs:
             MyPRsView(viewModel: viewModel)
+        case .conversation:
+            ConversationListView(
+                groups: viewModel.conversationGroups,
+                isLoading: viewModel.isLoadingConversations
+            )
         case .filters:
             FiltersView()
         case .settings:

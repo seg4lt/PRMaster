@@ -100,7 +100,7 @@ struct TabButton: View {
             HStack(spacing: isCompact ? 3 : 4) {
                 Image(systemName: tab.icon)
                     .font(isCompact ? .system(size: 9) : .caption)
-                Text(tab.rawValue)
+                Text(tab.displayName(isCompact: isCompact))
                     .font(isCompact ? .system(size: 10) : .caption)
                 if count > 0 {
                     Text("\(count)")

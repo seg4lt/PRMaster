@@ -25,8 +25,10 @@ class PRListViewModel: ObservableObject {
     @Published var toReviewPRs: [EnrichedPullRequest] = []
     @Published var reviewedPRs: [EnrichedPullRequest] = []
     @Published var myOpenPRs: [EnrichedPullRequest] = []
+    @Published var conversationGroups: [ConversationGroup] = []
     @Published var isLoading = false
     @Published var isEnriching = false
+    @Published var isLoadingConversations = false
     @Published var errors: [AppError] = []
     @Published var lastUpdate: Date?
     @Published var currentUser: String?
@@ -85,6 +87,10 @@ class PRListViewModel: ObservableObject {
                 .map { $0.pr.repository.nameWithOwner }
         )
         return repos.sorted()
+    }
+
+    var conversationCount: Int {
+        conversationGroups.reduce(0) { $0 + $1.conversations.count }
     }
 
     init() {
@@ -206,6 +212,29 @@ class PRListViewModel: ObservableObject {
         let filters = fetchNotificationFilters()
         await checkNotifications(for: toReviewPRs, filters: filters)
         await checkMyPRNotifications(for: myOpenPRs)
+
+        await loadConversations()
+    }
+
+    private func loadConversations() async {
+        guard let currentUser, !currentUser.isEmpty else {
+            conversationGroups = []
+            isLoadingConversations = false
+            return
+        }
+
+        isLoadingConversations = true
+        defer { isLoadingConversations = false }
+
+        do {
+            conversationGroups = try await github.fetchConversations(currentUser: currentUser)
+        } catch {
+            conversationGroups = []
+            let appError = AppError.from(error)
+            if !errors.contains(appError) {
+                errors.append(appError)
+            }
+        }
     }
 
     private enum PRFetchType {
@@ -386,6 +415,9 @@ class PRListViewModel: ObservableObject {
 
             if timeSinceUpdate < interval && !toReviewPRs.isEmpty {
                 // Data is fresh, no need to reload
+                if conversationGroups.isEmpty, currentUser != nil {
+                    await loadConversations()
+                }
                 return
             }
         }

@@ -186,6 +186,46 @@ actor GitHubService {
         }
     }
 
+    func fetchConversationCandidatePRs() async throws -> [PullRequest] {
+        let start = Date()
+        let command = "search prs for conversations"
+
+        do {
+            async let involvedJSON = withRetry {
+                try await self.shell.executeGH([
+                    "search", "prs",
+                    "--involves", "@me",
+                    "--state", "open",
+                    "--limit", "100",
+                    "--json", "number,title,url,state,createdAt,updatedAt,isDraft,author,repository"
+                ])
+            }
+
+            async let mentionedJSON = withRetry {
+                try await self.shell.executeGH([
+                    "search", "prs",
+                    "--mentions", "@me",
+                    "--state", "open",
+                    "--limit", "100",
+                    "--json", "number,title,url,state,createdAt,updatedAt,isDraft,author,repository"
+                ])
+            }
+
+            let (involved, mentioned) = try await (involvedJSON, mentionedJSON)
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            let involvedResults = involved.isEmpty ? [] : try decoder.decode([PRSearchResult].self, from: Data(involved.utf8))
+            let mentionedResults = mentioned.isEmpty ? [] : try decoder.decode([PRSearchResult].self, from: Data(mentioned.utf8))
+
+            return (involvedResults + mentionedResults)
+                .map { $0.toPullRequest() }
+                .uniqued()
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
     func fetchPRDetail(owner: String, repo: String, number: Int) async throws -> PRDetail? {
         let results = try await fetchPRDetailsBatch(owner: owner, repo: repo, numbers: [number])
         return results[number]
@@ -375,6 +415,122 @@ actor GitHubService {
             return true
         } catch {
             return false
+        }
+    }
+
+    func fetchConversations(currentUser: String) async throws -> [ConversationGroup] {
+        let candidates = try await fetchConversationCandidatePRs()
+            .filter { $0.isOpen }
+
+        guard !candidates.isEmpty else { return [] }
+
+        let normalizedUser = currentUser.lowercased()
+
+        let items = try await withThrowingTaskGroup(of: [ConversationItem].self) { group in
+            for pr in candidates {
+                group.addTask {
+                    let detail = try await self.fetchConversationDetail(for: pr)
+                    return detail.conversationItems(for: normalizedUser)
+                }
+            }
+
+            var allItems: [ConversationItem] = []
+            for try await result in group {
+                allItems.append(contentsOf: result)
+            }
+            return allItems
+        }
+
+        let dedupedItems = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { current, _ in current }).values
+            .sorted { $0.latestActivityAt > $1.latestActivityAt }
+
+        let grouped = Dictionary(grouping: dedupedItems, by: \.prID)
+            .values
+            .compactMap { items -> ConversationGroup? in
+                guard let first = items.first else { return nil }
+                let sortedItems = items.sorted { $0.latestActivityAt > $1.latestActivityAt }
+                return ConversationGroup(
+                    prID: first.prID,
+                    prTitle: first.prTitle,
+                    prNumber: first.prNumber,
+                    repoNameWithOwner: first.repoNameWithOwner,
+                    prURL: first.prURL,
+                    conversations: sortedItems
+                )
+            }
+            .sorted { $0.latestActivityAt > $1.latestActivityAt }
+
+        return grouped
+    }
+
+    private func fetchConversationDetail(for pr: PullRequest) async throws -> ConversationPRDetail {
+        let start = Date()
+        let command = "graphql conversations \(pr.repository.shortName)#\(pr.number)"
+
+        let query = """
+        query {
+          repository(owner: "\(pr.repository.owner)", name: "\(pr.repository.shortName)") {
+            pullRequest(number: \(pr.number)) {
+              number
+              title
+              url
+              comments(first: 50) {
+                nodes {
+                  id
+                  body
+                  createdAt
+                  url
+                  author {
+                    login
+                  }
+                }
+              }
+              reviewThreads(first: 50) {
+                nodes {
+                  id
+                  isResolved
+                  path
+                  line
+                  originalLine
+                  comments(first: 50) {
+                    nodes {
+                      id
+                      body
+                      createdAt
+                      url
+                      author {
+                        login
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+
+        do {
+            let json = try await withRetry {
+                try await shell.executeGH([
+                    "api", "graphql",
+                    "-f", "query=\(query)"
+                ])
+            }
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+
+            guard !json.isEmpty else {
+                throw ShellError.commandFailed("Empty conversation response", 1)
+            }
+
+            let response = try decoder.decode(ConversationDetailResponse.self, from: Data(json.utf8))
+            guard let detail = response.data.repository?.pullRequest else {
+                throw ShellError.commandFailed("Missing pull request conversation data", 1)
+            }
+            return detail
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
         }
     }
 
@@ -729,6 +885,141 @@ actor GitHubService {
         }
 
         return repoDiffs
+    }
+}
+
+private struct ConversationDetailResponse: Codable {
+    let data: ConversationDetailData
+}
+
+private struct ConversationDetailData: Codable {
+    let repository: ConversationRepository?
+}
+
+private struct ConversationRepository: Codable {
+    let pullRequest: ConversationPRDetail?
+}
+
+private struct ConversationPRDetail: Codable {
+    let number: Int
+    let title: String
+    let url: String
+    let comments: IssueCommentNodes?
+    let reviewThreads: ReviewThreadNodes?
+
+    func conversationItems(for currentUser: String) -> [ConversationItem] {
+        let reviewThreadItems = reviewThreads?.nodes.compactMap { thread -> ConversationItem? in
+            guard !thread.isResolved else { return nil }
+            let messages = thread.comments.nodes.map(\.conversationMessage)
+            let userParticipated = messages.contains { $0.authorLogin?.lowercased() == currentUser }
+            let userMentioned = messages.contains { $0.body.containsMention(of: currentUser) }
+            guard userParticipated || userMentioned else { return nil }
+            guard let latestActivityAt = messages.map(\.createdAt).max() else { return nil }
+            let exactURL = messages.last?.url ?? url
+
+            return ConversationItem(
+                id: thread.id,
+                prID: prID,
+                prTitle: title,
+                prNumber: number,
+                repoNameWithOwner: repoNameWithOwner,
+                prURL: url,
+                kind: .reviewThread,
+                filePath: thread.path,
+                lineNumber: thread.line ?? thread.originalLine,
+                latestActivityAt: latestActivityAt,
+                exactURL: exactURL,
+                messages: messages.sorted { $0.createdAt < $1.createdAt }
+            )
+        } ?? []
+
+        let mentionCommentItems = comments?.nodes.compactMap { comment -> ConversationItem? in
+            guard comment.body.containsMention(of: currentUser) else { return nil }
+            return ConversationItem(
+                id: comment.id,
+                prID: prID,
+                prTitle: title,
+                prNumber: number,
+                repoNameWithOwner: repoNameWithOwner,
+                prURL: url,
+                kind: .mentionComment,
+                filePath: nil,
+                lineNumber: nil,
+                latestActivityAt: comment.createdAt,
+                exactURL: comment.url,
+                messages: [comment.conversationMessage]
+            )
+        } ?? []
+
+        return reviewThreadItems + mentionCommentItems
+    }
+
+    private var prID: String {
+        repoNameWithOwner + "#\(number)"
+    }
+
+    private var repoNameWithOwner: String {
+        URL(string: url)?
+            .pathComponents
+            .dropFirst()
+            .prefix(2)
+            .joined(separator: "/") ?? ""
+    }
+}
+
+private struct ReviewThreadNodes: Codable {
+    let nodes: [ReviewThread]
+}
+
+private struct ReviewThread: Codable {
+    let id: String
+    let isResolved: Bool
+    let path: String?
+    let line: Int?
+    let originalLine: Int?
+    let comments: ReviewThreadCommentNodes
+}
+
+private struct ReviewThreadCommentNodes: Codable {
+    let nodes: [ConversationComment]
+}
+
+private struct IssueCommentNodes: Codable {
+    let nodes: [ConversationComment]
+}
+
+private struct ConversationComment: Codable {
+    let id: String
+    let body: String
+    let createdAt: Date
+    let url: String
+    let author: ConversationCommentAuthor?
+
+    var conversationMessage: ConversationMessage {
+        ConversationMessage(
+            id: id,
+            authorLogin: author?.login,
+            body: body,
+            createdAt: createdAt,
+            url: url
+        )
+    }
+}
+
+private struct ConversationCommentAuthor: Codable {
+    let login: String?
+}
+
+private extension String {
+    func containsMention(of username: String) -> Bool {
+        let pattern = "(?i)(?:^|[^A-Za-z0-9-])@\(NSRegularExpression.escapedPattern(for: username))(?:$|[^A-Za-z0-9-])"
+
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return localizedCaseInsensitiveContains("@\(username)")
+        }
+
+        let range = NSRange(startIndex..<endIndex, in: self)
+        return regex.firstMatch(in: self, options: [], range: range) != nil
     }
 }
 
