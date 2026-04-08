@@ -103,6 +103,8 @@ private struct ConversationGroupSection: View {
     let selectedConversationID: String?
     let onSelect: (ConversationItem) -> Void
 
+    @State private var isExpanded = false
+
     private var needsReply: [ConversationItem] {
         group.conversations.filter(\.hasRepliesToCurrentUser)
     }
@@ -113,78 +115,97 @@ private struct ConversationGroupSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // PR header
-            VStack(alignment: .leading, spacing: 4) {
-                Text(group.prTitle)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .lineLimit(2)
+            // PR header — tap to expand/collapse
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(group.prTitle)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
 
-                HStack(spacing: 6) {
-                    Text(group.repoNameWithOwner)
-                    Text("#\(group.prNumber)")
-                    Text("·")
-                    Text("\(group.conversations.count) open")
-                    if !needsReply.isEmpty {
-                        Text("·")
-                        HStack(spacing: 3) {
-                            Image(systemName: "arrowshape.turn.up.backward.fill")
-                                .font(.caption2)
-                            Text("\(needsReply.count) awaiting reply")
+                        HStack(spacing: 6) {
+                            Text(group.repoNameWithOwner)
+                            Text("#\(group.prNumber)")
+                            Text("·")
+                            Text("\(group.conversations.count) open")
+                            if !needsReply.isEmpty {
+                                Text("·")
+                                HStack(spacing: 3) {
+                                    Image(systemName: "arrowshape.turn.up.backward.fill")
+                                        .font(.caption2)
+                                    Text("\(needsReply.count) awaiting reply")
+                                }
+                                .foregroundStyle(.red)
+                            }
                         }
-                        .foregroundStyle(.red)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
 
-            Divider()
+                    Spacer(minLength: 8)
 
-            // "Needs your reply" section
-            if !needsReply.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.caption2)
-                    Text("Needs your reply")
-                        .font(.caption2)
-                        .fontWeight(.semibold)
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
-                .foregroundStyle(.red)
                 .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
-
-                ForEach(needsReply) { conversation in
-                    conversationButton(conversation)
-                    if conversation.id != needsReply.last?.id || !otherConversations.isEmpty {
-                        Divider().padding(.leading, 12)
-                    }
-                }
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
 
-            // Other threads section
-            if !otherConversations.isEmpty {
+            if isExpanded {
+                Divider()
+
+                // "Needs your reply" section
                 if !needsReply.isEmpty {
                     HStack(spacing: 4) {
-                        Image(systemName: "bubble.left.fill")
+                        Image(systemName: "exclamationmark.circle.fill")
                             .font(.caption2)
-                        Text("Other threads")
+                        Text("Needs your reply")
                             .font(.caption2)
-                            .fontWeight(.medium)
+                            .fontWeight(.semibold)
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.red)
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
                     .padding(.bottom, 4)
+
+                    ForEach(needsReply) { conversation in
+                        conversationButton(conversation)
+                        if conversation.id != needsReply.last?.id || !otherConversations.isEmpty {
+                            Divider().padding(.leading, 12)
+                        }
+                    }
                 }
 
-                ForEach(otherConversations) { conversation in
-                    conversationButton(conversation)
-                    if conversation.id != otherConversations.last?.id {
-                        Divider().padding(.leading, 12)
+                // Other threads section
+                if !otherConversations.isEmpty {
+                    if !needsReply.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: "bubble.left.fill")
+                                .font(.caption2)
+                            Text("Other threads")
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                        .padding(.bottom, 4)
+                    }
+
+                    ForEach(otherConversations) { conversation in
+                        conversationButton(conversation)
+                        if conversation.id != otherConversations.last?.id {
+                            Divider().padding(.leading, 12)
+                        }
                     }
                 }
             }
