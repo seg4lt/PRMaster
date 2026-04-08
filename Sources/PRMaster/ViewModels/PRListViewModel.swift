@@ -305,6 +305,7 @@ class PRListViewModel: ObservableObject {
         }
     }
 
+    @MainActor
     private func sendNotification(for pr: EnrichedPullRequest, reason: CacheService.NotificationReason, matchedFilter: Bool) async {
         let title: String
         let body: String
@@ -353,6 +354,7 @@ class PRListViewModel: ObservableObject {
         }
     }
 
+    @MainActor
     private func sendMyPRNotification(for pr: EnrichedPullRequest, reason: CacheService.MyPRNotificationReason) async {
         let title: String
         let body: String
