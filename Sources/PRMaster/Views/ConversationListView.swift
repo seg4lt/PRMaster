@@ -10,18 +10,21 @@ struct ConversationListView: View {
     @FocusState private var isKeyboardFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            if isLoading && groups.isEmpty {
-                loadingView
-            } else if groups.isEmpty {
-                emptyView
-            } else {
-                listView
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                if isLoading && groups.isEmpty {
+                    loadingView
+                } else if groups.isEmpty {
+                    emptyView
+                } else {
+                    listView
+                }
             }
 
             if let selectedConversation {
                 Divider()
                 ConversationDetailView(conversation: selectedConversation)
+                    .frame(minWidth: 320, idealWidth: 400)
             }
         }
         .focusable()
