@@ -286,6 +286,26 @@ private struct ConversationRowView: View {
 private struct ConversationDetailView: View {
     let conversation: ConversationItem
 
+    @State private var showFullThread = false
+
+    private var userMessages: [ConversationMessage] {
+        conversation.messages.filter { conversation.isCurrentUser($0.authorLogin) }
+    }
+
+    private var otherMessageCount: Int {
+        conversation.messages.count - userMessages.count
+    }
+
+    private var visibleMessages: [(index: Int, message: ConversationMessage)] {
+        if showFullThread {
+            return conversation.messages.enumerated().map { ($0.offset, $0.element) }
+        }
+        // Show only the current user's messages (with their original indices for positioning)
+        return conversation.messages.enumerated().compactMap { index, msg in
+            conversation.isCurrentUser(msg.authorLogin) ? (index, msg) : nil
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             headerSection
@@ -295,6 +315,7 @@ private struct ConversationDetailView: View {
                     .foregroundStyle(.secondary)
             }
             Divider()
+            threadToggle
             messagesSection
             Divider()
             actionsSection
@@ -327,10 +348,57 @@ private struct ConversationDetailView: View {
         }
     }
 
+    private var threadToggle: some View {
+        HStack(spacing: 6) {
+            if showFullThread {
+                Text("All messages (\(conversation.messages.count))")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Your comments (\(userMessages.count))")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+
+                if otherMessageCount > 0 {
+                    Text("·")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Text("\(otherMessageCount) other \(otherMessageCount == 1 ? "reply" : "replies") hidden")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Spacer()
+
+            if conversation.messages.count > 1 {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showFullThread.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: showFullThread ? "person.fill" : "bubble.left.and.bubble.right")
+                            .font(.system(size: 9))
+                        Text(showFullThread ? "My comments" : "Full thread")
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.06))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
     private var messagesSection: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(conversation.messages.enumerated()), id: \.element.id) { index, message in
+                ForEach(visibleMessages, id: \.message.id) { index, message in
                     let isFirst = index == 0
                     let isFromCurrentUser = conversation.isCurrentUser(message.authorLogin)
 
