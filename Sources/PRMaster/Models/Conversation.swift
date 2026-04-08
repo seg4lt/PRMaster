@@ -40,6 +40,7 @@ struct ConversationItem: Identifiable {
     let latestActivityAt: Date
     let exactURL: String
     let messages: [ConversationMessage]
+    let currentUserLogin: String?
 
     var previewText: String {
         let source = messages.last(where: { !$0.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })?.body ?? ""
@@ -65,6 +66,33 @@ struct ConversationItem: Identifiable {
             return "\(filePath):\(lineNumber)"
         }
         return filePath
+    }
+
+    var replyCount: Int {
+        max(messages.count - 1, 0)
+    }
+
+    /// True when someone replied after the current user's message in this thread.
+    var hasRepliesToCurrentUser: Bool {
+        guard let user = currentUserLogin?.lowercased() else { return false }
+        guard let lastUserMessageIndex = messages.lastIndex(where: {
+            $0.authorLogin?.lowercased() == user
+        }) else { return false }
+        return messages[lastUserMessageIndex...].contains {
+            $0.authorLogin?.lowercased() != user
+        }
+    }
+
+    /// True when the first message in the thread was written by the current user.
+    var currentUserStartedThread: Bool {
+        guard let user = currentUserLogin?.lowercased() else { return false }
+        return messages.first?.authorLogin?.lowercased() == user
+    }
+
+    func isCurrentUser(_ login: String?) -> Bool {
+        guard let user = currentUserLogin?.lowercased(),
+              let login = login?.lowercased() else { return false }
+        return user == login
     }
 }
 

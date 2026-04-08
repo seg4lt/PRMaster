@@ -929,7 +929,8 @@ private struct ConversationPRDetail: Codable {
                 lineNumber: thread.line ?? thread.originalLine,
                 latestActivityAt: latestActivityAt,
                 exactURL: exactURL,
-                messages: messages.sorted { $0.createdAt < $1.createdAt }
+                messages: messages.sorted { $0.createdAt < $1.createdAt },
+                currentUserLogin: currentUser
             )
         } ?? []
 
@@ -947,7 +948,8 @@ private struct ConversationPRDetail: Codable {
                 lineNumber: nil,
                 latestActivityAt: comment.createdAt,
                 exactURL: comment.url,
-                messages: [comment.conversationMessage]
+                messages: [comment.conversationMessage],
+                currentUserLogin: currentUser
             )
         } ?? []
 

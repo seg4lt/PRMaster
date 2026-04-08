@@ -277,7 +277,8 @@ struct MainView: View {
         case .conversation:
             ConversationListView(
                 groups: viewModel.conversationGroups,
-                isLoading: viewModel.isLoadingConversations
+                isLoading: viewModel.isLoadingConversations,
+                currentUser: viewModel.currentUser
             )
         case .filters:
             FiltersView()

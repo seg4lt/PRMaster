@@ -4,6 +4,7 @@ import AppKit
 struct ConversationListView: View {
     let groups: [ConversationGroup]
     let isLoading: Bool
+    let currentUser: String?
 
     @State private var selectedConversation: ConversationItem?
     @FocusState private var isKeyboardFocused: Bool
@@ -99,8 +100,17 @@ private struct ConversationGroupSection: View {
     let selectedConversationID: String?
     let onSelect: (ConversationItem) -> Void
 
+    private var needsReply: [ConversationItem] {
+        group.conversations.filter(\.hasRepliesToCurrentUser)
+    }
+
+    private var otherConversations: [ConversationItem] {
+        group.conversations.filter { !$0.hasRepliesToCurrentUser }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // PR header
             VStack(alignment: .leading, spacing: 4) {
                 Text(group.prTitle)
                     .font(.subheadline)
@@ -112,6 +122,15 @@ private struct ConversationGroupSection: View {
                     Text("#\(group.prNumber)")
                     Text("·")
                     Text("\(group.conversations.count) open")
+                    if !needsReply.isEmpty {
+                        Text("·")
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrowshape.turn.up.backward.fill")
+                                .font(.caption2)
+                            Text("\(needsReply.count) awaiting reply")
+                        }
+                        .foregroundStyle(.red)
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -121,25 +140,66 @@ private struct ConversationGroupSection: View {
 
             Divider()
 
-            ForEach(group.conversations) { conversation in
-                Button {
-                    onSelect(conversation)
-                } label: {
-                    ConversationRowView(
-                        conversation: conversation,
-                        isSelected: selectedConversationID == conversation.id
-                    )
+            // "Needs your reply" section
+            if !needsReply.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.caption2)
+                    Text("Needs your reply")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
                 }
-                .buttonStyle(.plain)
+                .foregroundStyle(.red)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
 
-                if conversation.id != group.conversations.last?.id {
-                    Divider()
-                        .padding(.leading, 12)
+                ForEach(needsReply) { conversation in
+                    conversationButton(conversation)
+                    if conversation.id != needsReply.last?.id || !otherConversations.isEmpty {
+                        Divider().padding(.leading, 12)
+                    }
+                }
+            }
+
+            // Other threads section
+            if !otherConversations.isEmpty {
+                if !needsReply.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bubble.left.fill")
+                            .font(.caption2)
+                        Text("Other threads")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+                }
+
+                ForEach(otherConversations) { conversation in
+                    conversationButton(conversation)
+                    if conversation.id != otherConversations.last?.id {
+                        Divider().padding(.leading, 12)
+                    }
                 }
             }
         }
         .background(Color(NSColor.controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func conversationButton(_ conversation: ConversationItem) -> some View {
+        Button {
+            onSelect(conversation)
+        } label: {
+            ConversationRowView(
+                conversation: conversation,
+                isSelected: selectedConversationID == conversation.id
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -164,6 +224,21 @@ private struct ConversationRowView: View {
                         .background((conversation.kind == .reviewThread ? Color.blue : Color.orange).opacity(0.12))
                         .clipShape(Capsule())
 
+                    if conversation.hasRepliesToCurrentUser {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrowshape.turn.up.backward.fill")
+                                .font(.system(size: 8))
+                            Text("Replied to you")
+                        }
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.red.opacity(0.85))
+                        .clipShape(Capsule())
+                    }
+
                     if let locationText = conversation.locationText {
                         Text(locationText)
                             .font(.caption)
@@ -181,6 +256,16 @@ private struct ConversationRowView: View {
                     Text(conversation.latestAuthorLogin.map { "@\($0)" } ?? "Unknown")
                     Text("·")
                     Text(DateFormatters.timeAgo(from: conversation.latestActivityAt))
+
+                    if conversation.replyCount > 0 {
+                        Text("·")
+                        HStack(spacing: 3) {
+                            Image(systemName: "bubble.left.and.bubble.right")
+                                .font(.system(size: 9))
+                            Text("\(conversation.replyCount)")
+                        }
+                        .foregroundStyle(conversation.hasRepliesToCurrentUser ? .red : .secondary)
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -195,6 +280,8 @@ private struct ConversationRowView: View {
         .contentShape(Rectangle())
     }
 }
+
+// MARK: - Conversation Detail
 
 private struct ConversationDetailView: View {
     let conversation: ConversationItem
@@ -242,33 +329,20 @@ private struct ConversationDetailView: View {
 
     private var messagesSection: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                ForEach(conversation.messages) { message in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(message.authorDisplayName)
-                                .font(.caption)
-                                .fontWeight(.medium)
-                            Text("·")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                            Text(DateFormatters.fullDate(message.createdAt))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(conversation.messages.enumerated()), id: \.element.id) { index, message in
+                    let isFirst = index == 0
+                    let isFromCurrentUser = conversation.isCurrentUser(message.authorLogin)
 
-                        Text(message.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "No message body" : message.body)
-                            .font(.subheadline)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(10)
-                    .background(Color.primary.opacity(0.04))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    ThreadMessageView(
+                        message: message,
+                        isFirst: isFirst,
+                        isFromCurrentUser: isFromCurrentUser
+                    )
                 }
             }
         }
-        .frame(minHeight: 120, maxHeight: 260)
+        .frame(minHeight: 120, maxHeight: 300)
     }
 
     private var actionsSection: some View {
@@ -292,6 +366,101 @@ private struct ConversationDetailView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+        }
+    }
+}
+
+// MARK: - Thread Message
+
+private struct ThreadMessageView: View {
+    let message: ConversationMessage
+    let isFirst: Bool
+    let isFromCurrentUser: Bool
+
+    private var bubbleBackground: Color {
+        if isFromCurrentUser {
+            return Color.accentColor.opacity(0.10)
+        }
+        return Color.primary.opacity(0.04)
+    }
+
+    private var accentBorderColor: Color {
+        if isFromCurrentUser {
+            return .accentColor
+        }
+        return Color.primary.opacity(0.15)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !isFirst {
+                // Reply connector
+                HStack(spacing: 0) {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.12))
+                        .frame(width: 2, height: 10)
+                        .padding(.leading, 14)
+                    Spacer()
+                }
+            }
+
+            HStack(alignment: .top, spacing: 0) {
+                if !isFirst {
+                    // Left accent border for replies
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(accentBorderColor)
+                        .frame(width: 3)
+                        .padding(.leading, 8)
+                        .padding(.trailing, 8)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        if isFirst {
+                            Image(systemName: "bubble.left.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Image(systemName: "arrowshape.turn.up.left.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text(message.authorDisplayName)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(isFromCurrentUser ? Color.accentColor : Color.primary)
+
+                        if isFromCurrentUser {
+                            Text("you")
+                                .font(.system(size: 9))
+                                .fontWeight(.medium)
+                                .foregroundStyle(Color.accentColor)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.accentColor.opacity(0.12))
+                                .clipShape(Capsule())
+                        }
+
+                        Spacer()
+
+                        Text(DateFormatters.timeAgo(from: message.createdAt))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Text(message.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                         ? "No message body"
+                         : message.body)
+                        .font(.subheadline)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(10)
+                .background(bubbleBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(.leading, isFirst ? 0 : 0)
+            }
         }
     }
 }
