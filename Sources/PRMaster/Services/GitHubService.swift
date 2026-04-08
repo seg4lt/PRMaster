@@ -114,6 +114,48 @@ actor GitHubService {
         }
     }
 
+    // MARK: - PR Review Actions
+
+    func submitReview(owner: String, repo: String, prNumber: Int, event: String, body: String?) async throws {
+        let start = Date()
+        let command = "pr review \(owner)/\(repo)#\(prNumber) \(event)"
+        do {
+            var args = [
+                "api", "repos/\(owner)/\(repo)/pulls/\(prNumber)/reviews",
+                "-X", "POST",
+                "-f", "event=\(event)"
+            ]
+            if let body, !body.isEmpty {
+                args += ["-f", "body=\(body)"]
+            }
+            _ = try await withRetry {
+                try await self.shell.executeGH(args)
+            }
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
+    func addSelfAsReviewer(owner: String, repo: String, prNumber: Int, login: String) async throws {
+        let start = Date()
+        let command = "add reviewer \(login) to \(owner)/\(repo)#\(prNumber)"
+        do {
+            _ = try await withRetry {
+                try await self.shell.executeGH([
+                    "api", "repos/\(owner)/\(repo)/pulls/\(prNumber)/requested_reviewers",
+                    "-X", "POST",
+                    "-f", "reviewers[]=\(login)"
+                ])
+            }
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: true)
+        } catch {
+            trackCall(command: command, duration: Date().timeIntervalSince(start), success: false)
+            throw error
+        }
+    }
+
     func fetchPRsToReview() async throws -> [PullRequest] {
         let start = Date()
         let command = "search prs --review-requested @me"

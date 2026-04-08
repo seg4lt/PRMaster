@@ -393,6 +393,41 @@ class PRListViewModel: ObservableObject {
         await loadAllData()
     }
 
+    // MARK: - PR Review Actions
+
+    func submitReview(for pr: EnrichedPullRequest, event: String, body: String?) async {
+        do {
+            try await github.submitReview(
+                owner: pr.pr.repository.owner,
+                repo: pr.pr.repository.shortName,
+                prNumber: pr.pr.number,
+                event: event,
+                body: body
+            )
+            await refresh()
+        } catch {
+            errors.append(.unknown("Failed to submit review: \(error.localizedDescription)"))
+        }
+    }
+
+    func addSelfAsReviewer(for pr: EnrichedPullRequest) async {
+        guard let login = currentUser, !login.isEmpty else {
+            errors.append(.unknown("Cannot add reviewer: current user unknown"))
+            return
+        }
+        do {
+            try await github.addSelfAsReviewer(
+                owner: pr.pr.repository.owner,
+                repo: pr.pr.repository.shortName,
+                prNumber: pr.pr.number,
+                login: login
+            )
+            await refresh()
+        } catch {
+            errors.append(.unknown("Failed to add reviewer: \(error.localizedDescription)"))
+        }
+    }
+
     func retryFailedOperations() async {
         guard retryCount < maxRetries else { return }
         retryCount += 1

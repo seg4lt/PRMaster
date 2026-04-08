@@ -3,6 +3,35 @@ import SwiftUI
 struct PRDetailView: View {
     let pr: EnrichedPullRequest
 
+    @State private var isSubmittingReview = false
+    @State private var showRequestChangesInput = false
+    @State private var requestChangesBody = ""
+    @State private var isAddingReviewer = false
+
+    private var currentUser: String? {
+        PRListViewModel.shared.currentUser
+    }
+
+    /// True if the current user is the PR author (can't review own PR)
+    private var isOwnPR: Bool {
+        guard let user = currentUser else { return false }
+        return pr.pr.author?.login.lowercased() == user.lowercased()
+    }
+
+    /// True if the current user is already a requested reviewer or has submitted a review
+    private var isAlreadyReviewer: Bool {
+        guard let user = currentUser?.lowercased() else { return false }
+        let isRequested = pr.requestedReviewers.contains { $0.lowercased() == user }
+        let hasReviewed = pr.reviews.contains { $0.author?.login.lowercased() == user }
+        return isRequested || hasReviewed
+    }
+
+    /// True if user is a pending reviewer (requested but hasn't reviewed yet)
+    private var isPendingReviewer: Bool {
+        guard let user = currentUser?.lowercased() else { return false }
+        return pr.pendingReviewers.contains { $0.lowercased() == user }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             headerSection
@@ -11,6 +40,10 @@ struct PRDetailView: View {
             Divider()
             checksSection
             Divider()
+            if !isOwnPR {
+                reviewActionsSection
+                Divider()
+            }
             actionsSection
         }
         .padding(12)
@@ -113,6 +146,117 @@ struct PRDetailView: View {
                 Text("No checks")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var reviewActionsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Review")
+                .font(.subheadline)
+                .fontWeight(.medium)
+
+            HStack(spacing: 8) {
+                // Approve button
+                Button {
+                    isSubmittingReview = true
+                    Task {
+                        await PRListViewModel.shared.submitReview(for: pr, event: "APPROVE", body: nil)
+                        isSubmittingReview = false
+                    }
+                } label: {
+                    Label("Approve", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+                .controlSize(.small)
+                .disabled(isSubmittingReview)
+
+                // Request Changes button
+                Button {
+                    showRequestChangesInput.toggle()
+                } label: {
+                    Label("Request Changes", systemImage: "xmark.circle")
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+                .controlSize(.small)
+                .disabled(isSubmittingReview)
+
+                // Add me as reviewer button (only if not already reviewing)
+                if !isAlreadyReviewer {
+                    Button {
+                        isAddingReviewer = true
+                        Task {
+                            await PRListViewModel.shared.addSelfAsReviewer(for: pr)
+                            isAddingReviewer = false
+                        }
+                    } label: {
+                        Label("Add Me as Reviewer", systemImage: "person.badge.plus")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isAddingReviewer)
+                }
+            }
+
+            if isSubmittingReview || isAddingReviewer {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                    Text(isAddingReviewer ? "Adding reviewer..." : "Submitting review...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if showRequestChangesInput {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("What changes are needed?")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    TextEditor(text: $requestChangesBody)
+                        .font(.subheadline)
+                        .frame(height: 60)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.primary.opacity(0.15), lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                    HStack(spacing: 8) {
+                        Button {
+                            isSubmittingReview = true
+                            let body = requestChangesBody
+                            Task {
+                                await PRListViewModel.shared.submitReview(
+                                    for: pr,
+                                    event: "REQUEST_CHANGES",
+                                    body: body.isEmpty ? nil : body
+                                )
+                                isSubmittingReview = false
+                                showRequestChangesInput = false
+                                requestChangesBody = ""
+                            }
+                        } label: {
+                            Text("Submit")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                        .controlSize(.small)
+                        .disabled(isSubmittingReview)
+
+                        Button {
+                            showRequestChangesInput = false
+                            requestChangesBody = ""
+                        } label: {
+                            Text("Cancel")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
             }
         }
     }
